@@ -58,7 +58,9 @@ public abstract class AbstractNodeCostSearch implements IPathFinder, Helper {
 
     private volatile boolean isFinished;
 
-    protected boolean cancelRequested;
+    protected volatile boolean cancelRequested;
+
+    private final long sessionId;
 
     /**
      * This is really complicated and hard to explain. I wrote a comment in the old version of MineBot but it was so
@@ -90,10 +92,21 @@ public abstract class AbstractNodeCostSearch implements IPathFinder, Helper {
         this.goal = goal;
         this.context = context;
         this.map = new Long2ObjectOpenHashMap<>(Baritone.settings().pathingMapDefaultSize.value, Baritone.settings().pathingMapLoadFactor.value);
+        this.sessionId = System.currentTimeMillis() ^ System.nanoTime();
     }
 
-    public void cancel() {
-        cancelRequested = true;
+    @Override
+    public long getSessionId() {
+        return sessionId;
+    }
+
+    @Override
+    public boolean cancel() {
+        if (!cancelRequested && !isFinished) {
+            cancelRequested = true;
+            return true;
+        }
+        return false;
     }
 
     @Override
