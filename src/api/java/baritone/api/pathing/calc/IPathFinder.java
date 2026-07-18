@@ -41,6 +41,20 @@ public interface IPathFinder {
     PathCalculationResult calculate(long primaryTimeout, long failureTimeout);
 
     /**
+     * Gets the search session ID.
+     *
+     * @return The session ID
+     */
+    long getSessionId();
+
+    /**
+     * Atomically cancels the current search.
+     *
+     * @return true if it was cancelled by this call, false if it was already cancelled or finished.
+     */
+    boolean cancel();
+
+    /**
      * Intended to be called concurrently with calculatePath from a different thread to tell if it's finished yet
      *
      * @return Whether or not this finder is finished
