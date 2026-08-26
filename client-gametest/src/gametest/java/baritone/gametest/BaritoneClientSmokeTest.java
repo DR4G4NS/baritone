@@ -175,7 +175,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
         context.waitFor(client -> client.player != null && client.player.level().dimension() == dimension, 400);
         context.waitTicks(40);
-        singleplayer.getServer().runCommand(in + "forceload add -2 -2 6 2");
+        singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 32");
         singleplayer.getServer().runCommand(in + "fill -16 " + floorY + " -16 80 " + floorY + " 16 " + floorBlock);
         fillAirBox(singleplayer, in, -16, airMinY, -16, 80, airMaxY, 16);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
@@ -203,7 +203,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
         context.waitFor(client -> client.player != null && client.player.level().dimension() == dimension, 400);
         context.waitTicks(40);
-        singleplayer.getServer().runCommand(in + "forceload add -2 -2 5 1");
+        singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 32");
         singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " 16 " + surfaceBlock);
         fillAirBox(singleplayer, in, -16, surfaceY + 1, -16, 80, 120, 16);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
@@ -342,11 +342,16 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
             return client.player != null && client.player.isFallFlying();
         }, 200);
         if (addLateLava) {
-            context.waitFor(client -> {
-                recordFlightState(client.player, touchedEnvironmentalHazard, lastFlightState);
-                requireFlightAlive(client.player, lastFlightState);
-                return client.player != null && client.player.getX() > 8.0D;
-            }, PATH_TIMEOUT_TICKS);
+            try {
+                context.waitFor(client -> {
+                    recordFlightState(client.player, touchedEnvironmentalHazard, lastFlightState);
+                    requireFlightAlive(client.player, lastFlightState);
+                    return client.player != null && client.player.getX() > 8.0D;
+                }, PATH_TIMEOUT_TICKS);
+            } catch (AssertionError timeout) {
+                throw new AssertionError("Open #elytragoto never left spawn; last state: "
+                        + lastFlightState.get(), timeout);
+            }
             singleplayer.getServer().runCommand(
                     "execute in minecraft:the_nether run fill 28 99 -2 28 99 2 minecraft:lava"
             );
