@@ -181,7 +181,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
-        context.waitTicks(5);
+        context.waitTicks(20);
     }
 
     private static void runDimensionElytraLandingScenario(ClientGameTestContext context,

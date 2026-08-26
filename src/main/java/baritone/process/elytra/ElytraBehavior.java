@@ -279,8 +279,8 @@ public final class ElytraBehavior implements Helper {
                             final Throwable cause = ex.getCause();
                             if (cause instanceof PathCalculationException) {
                                 logDirect("Failed to compute next segment");
-                                if (ctx.player().distanceToSqr(pathStart.getCenter()) < 16 * 16) {
-                                    logVerbose("Player is near the segment start, therefore repeating this calculation is pointless. Marking as complete");
+                                if (ctx.player().distanceToSqr(ElytraBehavior.this.destination.getCenter()) < 16 * 16) {
+                                    logVerbose("Player is near the destination, therefore repeating this calculation is pointless. Marking as complete");
                                     completePath = true;
                                 }
                             } else {
@@ -292,7 +292,7 @@ public final class ElytraBehavior implements Helper {
 
         public void clear() {
             this.path = NetherPath.emptyPath();
-            this.completePath = true;
+            this.completePath = false;
             this.recalculating = false;
             this.playerNear = 0;
             this.ticksNearUnchanged = 0;
