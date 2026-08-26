@@ -202,12 +202,26 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         context.waitTicks(40);
         singleplayer.getServer().runCommand(in + "forceload add -2 -2 5 1");
         singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " 16 " + surfaceBlock);
-        singleplayer.getServer().runCommand(in + "fill -16 " + (surfaceY + 1) + " -16 80 120 16 minecraft:air");
+        fillAirBox(singleplayer, in, -16, surfaceY + 1, -16, 80, 120, 16);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         context.waitTicks(20);
         runElytraLanding(context, scenario, targetX, destY, surfaceY);
         context.takeScreenshot("elytra-landing-" + scenario);
+    }
+
+    private static void fillAirBox(TestSingleplayerContext singleplayer, String in,
+                                   int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        for (int x0 = minX; x0 <= maxX; x0 += 24) {
+            int x1 = Math.min(x0 + 23, maxX);
+            for (int y0 = minY; y0 <= maxY; y0 += 16) {
+                int y1 = Math.min(y0 + 15, maxY);
+                singleplayer.getServer().runCommand(
+                        in + "fill " + x0 + " " + y0 + " " + minZ + " "
+                                + x1 + " " + y1 + " " + maxZ + " minecraft:air"
+                );
+            }
+        }
     }
 
     private static void runElytraLanding(ClientGameTestContext context, String scenario,
