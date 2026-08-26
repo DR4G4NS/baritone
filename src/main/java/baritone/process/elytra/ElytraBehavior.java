@@ -74,7 +74,7 @@ public final class ElytraBehavior implements Helper {
     static final double LANDING_RECOVERY_DESCENT_SPEED = -0.40;
     static final double VANILLA_FALL_DISTANCE_RESET_SPEED = -0.5;
     static final float LANDING_FLARE_PITCH = -30.0F;
-    static final float LANDING_RECOVERY_PITCH = -25.0F;
+    static final float LANDING_RECOVERY_PITCH = -80.0F;
     static final int LANDING_RECOVERY_ROCKET_COOLDOWN_TICKS = 20;
     private final Baritone baritone;
     private final IPlayerContext ctx;
@@ -1262,7 +1262,7 @@ public final class ElytraBehavior implements Helper {
     static boolean canDeployLandingRecovery(boolean needsLandingRecovery, float currentPitch) {
         // Firework acceleration follows the current look vector. Wait until the player is
         // actually flaring so a delayed look tick cannot boost a dive into the ground.
-        return needsLandingRecovery && currentPitch <= -15.0F;
+        return needsLandingRecovery && currentPitch <= -50.0F;
     }
 
     static float landingPitch(double heightAboveSurface, double verticalSpeed, float solvedPitch) {

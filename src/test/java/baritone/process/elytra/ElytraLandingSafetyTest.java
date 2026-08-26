@@ -27,9 +27,9 @@ public class ElytraLandingSafetyTest {
     @Test
     public void recoveryRocketWaitsUntilTheLookVectorIsFlaring() {
         assertFalse(ElytraBehavior.canDeployLandingRecovery(true, 8.0F));
-        assertFalse(ElytraBehavior.canDeployLandingRecovery(true, -14.9F));
-        assertTrue(ElytraBehavior.canDeployLandingRecovery(true, -15.0F));
-        assertFalse(ElytraBehavior.canDeployLandingRecovery(false, -30.0F));
+        assertFalse(ElytraBehavior.canDeployLandingRecovery(true, -49.9F));
+        assertTrue(ElytraBehavior.canDeployLandingRecovery(true, -50.0F));
+        assertFalse(ElytraBehavior.canDeployLandingRecovery(false, -80.0F));
     }
 
     @Test
@@ -44,21 +44,86 @@ public class ElytraLandingSafetyTest {
     }
 
     @Test
-    public void landingFlareKeepsImpactSpeedBelowVanillaFallDamageReset() {
+    public void overworldLandingTouchesTheSurfaceBelowVanillaFallDamageSpeed() {
         VoxelGrid world = new VoxelGrid(40, 32, 40);
-        for (int x = 0; x < 40; x++) {
-            for (int z = 0; z < 40; z++) {
-                world.setBlocked(x, 0, z, true);
+        fillLayer(world, 0, 0, 0, 39, 39);
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(20.0D, 24.5D, 20.0D, 0.70D, -0.12D, 0.10D, 0.0D, 8.0D, 2, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("overworld", result);
+        assertTrue(result.lastAirborne.y() < 26.0D);
+    }
+
+    @Test
+    public void netherLandingTouchesNetherrackWithoutHittingTheRoof() {
+        VoxelGrid world = new VoxelGrid(40, 48, 40);
+        fillLayer(world, 0, 0, 0, 39, 39);
+        fillLayer(world, 40, 0, 0, 39, 39);
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(20.0D, 24.5D, 20.0D, 0.70D, -0.12D, 0.10D, 0.0D, 8.0D, 2, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("nether", result);
+        assertTrue("nether landing climbed into the roof, y=" + result.lastAirborne.y(),
+                result.lastAirborne.y() < 38.0D);
+    }
+
+    @Test
+    public void endLandingStaysOnTheIslandInsteadOfFallingIntoTheVoid() {
+        VoxelGrid world = new VoxelGrid(48, 32, 64);
+        fillLayer(world, 0, 18, 0, 29, 63);
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(24.0D, 16.5D, 8.0D, 0.0D, -0.10D, 0.05D, 0.0D, -18.0D, 2, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("end", result);
+        assertTrue("end landing fell off the island sides x=" + result.lastAirborne.x(),
+                result.lastAirborne.x() >= 18.3D && result.lastAirborne.x() <= 29.7D);
+        assertTrue("end landing hit the void instead of the island y=" + result.lastAirborne.y(),
+                result.lastAirborne.y() >= 0.8D);
+    }
+
+    @Test
+    public void verticalWindowTracksDimensionHeightAndKeepsNativeCoordinatesStable() {
+        int overworld = ElytraVerticalWindow.choose(-64, 384, 80, 96, false);
+        assertTrue(overworld <= 80);
+        assertTrue(overworld + 128 > 96);
+        int nether = ElytraVerticalWindow.choose(0, 256, 80, 90, false);
+        assertTrue(nether <= 80);
+        assertTrue(nether + 128 > 90);
+        int end = ElytraVerticalWindow.choose(0, 256, 64, 80, false);
+        assertTrue(end <= 64);
+        assertTrue(end + 128 > 80);
+        assertTrue(ElytraVerticalWindow.choose(0, 256, 220, 230, false) >= 112);
+        assertTrue(ElytraVerticalWindow.choose(0, 256, 80, 90, true) == 0);
+    }
+
+    private static void fillLayer(VoxelGrid world, int y, int minX, int minZ, int maxX, int maxZ) {
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                world.setBlocked(x, y, z, true);
             }
         }
-        ElytraState state = new ElytraState(20.0D, 24.5D, 20.0D,
-                0.85D, -0.12D, 0.05D, 0.0D, 8.0D, 2, 100, 0);
-        double lastSafeVerticalSpeed = state.velocityY();
-        boolean touchedGround = false;
+    }
+
+    private static void assertSafeTouchdown(String dimension, LandingResult result) {
+        assertTrue(dimension + " never touched the surface", result.touchedGround);
+        assertTrue(dimension + " impact vy=" + result.impactVy,
+                result.impactVy > ElytraBehavior.VANILLA_FALL_DISTANCE_RESET_SPEED);
+    }
+
+    private static LandingResult landWithController(VoxelGrid world, ElytraState initial, double groundTopY) {
+        ElytraState state = initial;
+        double impactVy = state.velocityY();
+        ElytraState lastAirborne = state;
         boolean recoveryOnCooldown = false;
         int cooldown = 0;
         for (int tick = 0; tick < 160; tick++) {
-            double height = state.y() - 1.0D;
+            double height = state.y() - groundTopY;
             boolean needsBoost = ElytraBehavior.requiresLandingBoost(height, state.velocityY(), recoveryOnCooldown);
             float commandedPitch = needsBoost
                     ? ElytraBehavior.LANDING_RECOVERY_PITCH
@@ -66,7 +131,7 @@ public class ElytraLandingSafetyTest {
             boolean rocket = ElytraBehavior.canDeployLandingRecovery(needsBoost, (float) state.pitch());
             ElytraFlightModel.Step step = ElytraFlightModel.step(
                     state,
-                    new ElytraControl(0.0D, commandedPitch, rocket),
+                    new ElytraControl(state.yaw(), commandedPitch, rocket),
                     world,
                     0.0D
             );
@@ -78,22 +143,14 @@ public class ElytraLandingSafetyTest {
                 recoveryOnCooldown = cooldown > 0;
             }
             if (step.collided()) {
-                touchedGround = true;
-                break;
+                return new LandingResult(true, impactVy, lastAirborne);
             }
             state = step.state();
-            lastSafeVerticalSpeed = state.velocityY();
+            lastAirborne = state;
+            impactVy = state.velocityY();
         }
-        assertTrue(touchedGround);
-        assertTrue("impact vy=" + lastSafeVerticalSpeed, lastSafeVerticalSpeed > ElytraBehavior.VANILLA_FALL_DISTANCE_RESET_SPEED);
+        return new LandingResult(false, impactVy, lastAirborne);
     }
 
-    @Test
-    public void verticalWindowTracksDimensionHeightAndKeepsNativeCoordinatesStable() {
-        int overworld = ElytraVerticalWindow.choose(-64, 384, 80, 96, false);
-        assertTrue(overworld <= 80);
-        assertTrue(overworld + 128 > 96);
-        assertTrue(ElytraVerticalWindow.choose(0, 256, 220, 230, false) >= 112);
-        assertTrue(ElytraVerticalWindow.choose(0, 256, 80, 90, true) == 0);
-    }
+    private record LandingResult(boolean touchedGround, double impactVy, ElytraState lastAirborne) {}
 }

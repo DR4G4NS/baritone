@@ -61,8 +61,10 @@ algorithmic measurements, not a claim about whole-client tick time.
 
 The headless Elytra replay checks swept-volume collision, final distance,
 rocket use and bounded completion. The current real-client tier proves loading,
-ordinary walking/mining and cancellation lifecycle. Full automated Nether
-Elytra fixtures (wall, narrow corridor, late chunk obstacle, normal/emergency
-landing and impossible destination) remain future integration coverage; they
-must not be described as executed merely because their algorithmic counterparts
-pass in replay.
+ordinary walking/mining and cancellation lifecycle. Client GameTest also
+covers `#elytragoto` landings in the Overworld, Nether and End: the player
+must finish on the prepared surface, stop gliding, stay within the pad, and
+lose at most one heart. Full automated Nether fixtures for walls, narrow
+corridors, late chunk obstacles and impossible destinations remain future
+integration coverage; they must not be described as executed merely because
+their algorithmic counterparts pass in replay.
