@@ -180,7 +180,6 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         fillAirBox(singleplayer, in, -16, airMinY, -16, 80, airMaxY, 16);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
-        singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
         context.waitTicks(20);
     }
 
@@ -326,6 +325,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         int rocketsBefore = rocketCount(context);
         AtomicBoolean touchedEnvironmentalHazard = new AtomicBoolean();
         AtomicReference<String> lastFlightState = new AtomicReference<>("not airborne");
+        singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
         context.runOnClient(client -> {
             client.player.startFallFlying();
             client.player.connection.send(new ServerboundPlayerCommandPacket(
