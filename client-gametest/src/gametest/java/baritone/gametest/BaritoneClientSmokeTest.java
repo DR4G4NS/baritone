@@ -41,6 +41,8 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
             singleplayer.getClientLevel().waitForChunksRender();
             try {
+                singleplayer.getServer().runCommand("gamerule doImmediateRespawn true");
+                singleplayer.getServer().runCommand("difficulty peaceful");
                 if (!Boolean.parseBoolean(System.getenv("BARITONE_ELYTRA_ONLY"))) {
                     prepareFlatCourse(singleplayer);
                     waitAt(context, 0, 80, 0, 200);
@@ -178,6 +180,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 32");
         singleplayer.getServer().runCommand(in + "fill -16 " + floorY + " -16 80 " + floorY + " 16 " + floorBlock);
         fillAirBox(singleplayer, in, -16, airMinY, -16, 80, airMaxY, 16);
+        encloseElytraCorridor(singleplayer, in, floorBlock, floorY + 1, airMaxY + 1);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         context.waitTicks(20);
@@ -195,21 +198,24 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         final int targetX = 24;
         final String in = "execute in " + dimensionId + " run ";
         singleplayer.getServer().runCommand("difficulty peaceful");
+        singleplayer.getServer().runCommand("gamemode creative " + PLAYER);
         if (dimension == Level.END) {
             singleplayer.getServer().runCommand(in + "kill @e[type=minecraft:ender_dragon]");
         }
         singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         giveBoostingRockets(singleplayer, 32);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
-        context.waitFor(client -> client.player != null && client.player.level().dimension() == dimension, 400);
+        context.waitFor(client -> client.player != null && client.player.isAlive()
+                && client.player.level().dimension() == dimension, 400);
         context.waitTicks(40);
         singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 32");
         singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " 16 " + surfaceBlock);
         fillAirBox(singleplayer, in, -16, surfaceY + 1, -16, 80, 120, 16);
+        encloseElytraCorridor(singleplayer, in, surfaceBlock, surfaceY + 1, 121);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         context.waitTicks(20);
-        runElytraLanding(context, scenario, targetX, destY, surfaceY);
+        runElytraLanding(context, singleplayer, scenario, targetX, destY, surfaceY);
         context.takeScreenshot("elytra-landing-" + scenario);
     }
 
@@ -227,9 +233,19 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         }
     }
 
-    private static void runElytraLanding(ClientGameTestContext context, String scenario,
+    private static void encloseElytraCorridor(TestSingleplayerContext singleplayer, String in,
+                                             String wallBlock, int minY, int ceilingY) {
+        singleplayer.getServer().runCommand(in + "fill -16 " + minY + " -17 80 " + ceilingY + " -17 " + wallBlock);
+        singleplayer.getServer().runCommand(in + "fill -16 " + minY + " 17 80 " + ceilingY + " 17 " + wallBlock);
+        singleplayer.getServer().runCommand(in + "fill -16 " + ceilingY + " -16 80 " + ceilingY + " 16 " + wallBlock);
+    }
+
+    private static void runElytraLanding(ClientGameTestContext context,
+                                         TestSingleplayerContext singleplayer,
+                                         String scenario,
                                          int targetX, int destY, int surfaceY) {
-        context.waitFor(client -> client.player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST)
+        context.waitFor(client -> client.player != null && client.player.isAlive()
+                && client.player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST)
                 .is(Items.ELYTRA), 200);
         context.runOnClient(client -> {
             Settings settings = BaritoneAPI.getSettings();
@@ -246,6 +262,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         float startHealth = context.computeOnClient(client -> client.player.getHealth());
         AtomicBoolean touchedEnvironmentalHazard = new AtomicBoolean();
         AtomicReference<String> lastFlightState = new AtomicReference<>("not airborne");
+        singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
         context.runOnClient(client -> {
             client.player.startFallFlying();
             client.player.connection.send(new ServerboundPlayerCommandPacket(
@@ -353,7 +370,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
                         + lastFlightState.get(), timeout);
             }
             singleplayer.getServer().runCommand(
-                    "execute in minecraft:the_nether run fill 28 99 -2 28 99 2 minecraft:lava"
+                    "execute in minecraft:the_nether run fill 28 81 -2 28 81 2 minecraft:lava"
             );
         }
         context.waitFor(client -> {
