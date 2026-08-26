@@ -148,13 +148,17 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
 
     private static void runOpenOverworldElytraCommandScenario(ClientGameTestContext context,
                                                                TestSingleplayerContext singleplayer) {
-        singleplayer.getServer().runCommand("execute in minecraft:overworld run fill -8 70 -8 24 100 8 minecraft:air");
-        singleplayer.getServer().runCommand("execute in minecraft:overworld run fill 25 70 -8 56 100 8 minecraft:air");
-        singleplayer.getServer().runCommand("execute in minecraft:overworld run fill -8 69 -8 56 69 8 minecraft:stone");
+        final String in = "execute in minecraft:overworld run ";
         singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         giveBoostingRockets(singleplayer, 32);
-        singleplayer.getServer().runCommand("execute in minecraft:overworld run tp " + PLAYER + " 0.5 95 0.5");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
         context.waitFor(client -> client.player != null && client.player.level().dimension() == Level.OVERWORLD, 400);
+        context.waitTicks(40);
+        singleplayer.getServer().runCommand(in + "forceload add -2 -2 6 2");
+        singleplayer.getServer().runCommand(in + "fill -16 69 -16 80 69 16 minecraft:stone");
+        fillAirBox(singleplayer, in, -16, 70, -16, 80, 104, 16);
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
+        context.waitTicks(20);
         runElytraFlight(context, 40, false, singleplayer);
     }
 
