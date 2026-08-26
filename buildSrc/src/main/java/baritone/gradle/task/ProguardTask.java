@@ -25,7 +25,6 @@ import org.gradle.api.tasks.TaskAction;
 import org.gradle.api.tasks.TaskCollection;
 import org.gradle.api.tasks.compile.ForkOptions;
 import org.gradle.api.tasks.compile.JavaCompile;
-import org.gradle.internal.jvm.Jvm;
 import org.gradle.jvm.toolchain.JavaLanguageVersion;
 import org.gradle.jvm.toolchain.JavaLauncher;
 import org.gradle.jvm.toolchain.JavaToolchainService;
@@ -132,9 +131,7 @@ public class ProguardTask extends BaritoneGradleTask {
         template.add(0, "-injars '" + this.artifactPath.toString() + "'");
         template.add(1, "-outjars '" + this.getTemporaryFile(PROGUARD_EXPORT_PATH) + "'");
 
-        template.add(2, "-libraryjars  \"C:/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot/jmods/java.base.jmod\"(!**.jar;!module-info.class)");
-        template.add(3, "-libraryjars  \"C:/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot/jmods/java.desktop.jmod\"(!**.jar;!module-info.class)");
-        template.add(4, "-libraryjars  \"C:/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot/jmods/jdk.unsupported.jmod\"(!**.jar;!module-info.class)");
+        addJdkJmodLibraryJars(template, 2);
 
         {
             final Stream<File> libraries;
@@ -172,6 +169,35 @@ public class ProguardTask extends BaritoneGradleTask {
         standalone.removeIf(s -> s.contains("# this is the keep api"));
         standalone.add(2, "-printmapping " + new File(this.getRootRelativeFile(PROGUARD_MAPPING_DIR).toFile(), "mappings-" + addCompTypeFirst("standalone.txt")));
         Files.write(getTemporaryFile(compType + PROGUARD_STANDALONE_CONFIG), standalone);
+    }
+
+    /**
+     * ProGuard needs JDK {@code .jmod} files as library jars. Hardcoding a local Windows JDK 21
+     * path fails on CI (Linux + Zulu JDK 25). Use the same toolchain JDK that runs ProGuard.
+     */
+    private void addJdkJmodLibraryJars(List<String> template, int insertAt) {
+        Path jmodsDir = getJavaLauncherForProguard().getMetadata()
+                .getInstallationPath()
+                .getAsFile()
+                .toPath()
+                .resolve("jmods");
+        if (!Files.isDirectory(jmodsDir)) {
+            throw new IllegalStateException("JDK jmods directory not found at " + jmodsDir);
+        }
+        String[] required = {
+                "java.base.jmod",
+                "java.desktop.jmod",
+                "jdk.unsupported.jmod"
+        };
+        int index = insertAt;
+        for (String name : required) {
+            Path jmod = jmodsDir.resolve(name);
+            if (!Files.isRegularFile(jmod)) {
+                throw new IllegalStateException("Required JDK jmod missing: " + jmod);
+            }
+            String quoted = jmod.toAbsolutePath().toString().replace('\\', '/');
+            template.add(index++, "-libraryjars  \"" + quoted + "\"(!**.jar;!module-info.class)");
+        }
     }
 
     private Stream<File> acquireDependencies() {
