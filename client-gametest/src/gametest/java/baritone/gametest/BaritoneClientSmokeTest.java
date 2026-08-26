@@ -149,14 +149,14 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
     private static void runOpenOverworldElytraCommandScenario(ClientGameTestContext context,
                                                                TestSingleplayerContext singleplayer) {
         prepareLoadedElytraCorridor(context, singleplayer, "minecraft:overworld", Level.OVERWORLD,
-                "minecraft:stone", 69, 70, 120);
+                "minecraft:stone", 80, 81, 120);
         runElytraFlight(context, 40, false, singleplayer);
     }
 
     private static void runNetherLavaElytraCommandScenario(ClientGameTestContext context,
                                                             TestSingleplayerContext singleplayer) {
         prepareLoadedElytraCorridor(context, singleplayer, "minecraft:the_nether", Level.NETHER,
-                "minecraft:netherrack", 79, 80, 120);
+                "minecraft:netherrack", 80, 81, 120);
         runElytraFlight(context, 64, true, singleplayer);
     }
 
@@ -332,7 +332,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
                     client.player,
                     ServerboundPlayerCommandPacket.Action.START_FALL_FLYING
             ));
-            if (!primary().getCommandManager().execute("elytragoto " + targetX + " 90 0")) {
+            if (!primary().getCommandManager().execute("elytragoto " + targetX + " 104 0")) {
                 throw new AssertionError("#elytragoto was not accepted by the command manager");
             }
         });
