@@ -53,6 +53,8 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.AirBlock;
+import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
@@ -63,8 +65,8 @@ import static baritone.api.pathing.movement.ActionCosts.COST_INF;
 
 public class ElytraProcess extends BaritoneProcessHelper implements IBaritoneProcess, IElytraProcess, AbstractGameEventListener {
     static final double LANDING_APPROACH_DISTANCE = 16.0;
-    static final double LANDING_CAPTURE_HORIZONTAL_DISTANCE = 4.0;
-    static final double LANDING_CAPTURE_VERTICAL_DISTANCE = 6.0;
+    static final double LANDING_CAPTURE_HORIZONTAL_DISTANCE = 8.0;
+    static final double LANDING_CAPTURE_VERTICAL_DISTANCE = 12.0;
     public State state;
     private boolean goingToLandingSpot;
     private BetterBlockPos landingSpot;
@@ -250,7 +252,7 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         }
 
         if (ctx.player().isFallFlying()) {
-            behavior.landingMode = this.goingToLandingSpot || this.state == State.LANDING;
+            behavior.landingMode = shouldUseLandingFlightControls(this.state);
             this.goal = null;
             baritone.getInputOverrideHandler().clearAllKeys();
             behavior.tick();
@@ -357,6 +359,7 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         badLandingSpots.add(endPos);
         goingToLandingSpot = false;
         this.landingSpot = null;
+        this.landingSearchCooldown = 0;
         this.state = State.FLYING;
     }
 
@@ -463,11 +466,31 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         return safetyLanding || distanceSquared < LANDING_APPROACH_DISTANCE * LANDING_APPROACH_DISTANCE;
     }
 
+    static boolean shouldUseLandingFlightControls(State state) {
+        // Approach to the pad must keep normal firework cruise. Flare/no-rocket
+        // controls are only safe once we are already captured above the column.
+        return state == State.LANDING;
+    }
+
     static boolean isInsideLandingCapture(Vec3 playerPosition, Vec3 landingColumnTop) {
         final double dx = playerPosition.x - landingColumnTop.x;
         final double dz = playerPosition.z - landingColumnTop.z;
         return dx * dx + dz * dz < LANDING_CAPTURE_HORIZONTAL_DISTANCE * LANDING_CAPTURE_HORIZONTAL_DISTANCE
                 && Math.abs(playerPosition.y - landingColumnTop.y) < LANDING_CAPTURE_VERTICAL_DISTANCE;
+    }
+
+    static boolean isHazardousLandingSurface(BlockState state) {
+        final Block block = state.getBlock();
+        return !state.getFluidState().isEmpty()
+                || block == Blocks.MAGMA_BLOCK
+                || block == Blocks.CACTUS
+                || block == Blocks.SWEET_BERRY_BUSH
+                || block == Blocks.CAMPFIRE
+                || block == Blocks.SOUL_CAMPFIRE
+                || block == Blocks.WITHER_ROSE
+                || block == Blocks.POINTED_DRIPSTONE
+                || block == Blocks.COBWEB
+                || block instanceof BaseFireBlock;
     }
 
     public void requestVerticalRecenter() {
@@ -571,7 +594,10 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         if (state.getBlock() == Blocks.NETHER_BRICKS && !Baritone.settings().elytraAllowLandOnNetherFortress.value) {
             return false;
         }
-        return state.getFluidState().isEmpty() && state.isFaceSturdy(ctx.world(), pos, Direction.UP);
+        if (isHazardousLandingSurface(state)) {
+            return false;
+        }
+        return state.isFaceSturdy(ctx.world(), pos, Direction.UP);
     }
 
     private boolean isAtEdge(BlockPos pos) {
@@ -587,12 +613,17 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
     }
 
     private boolean isColumnAir(BlockPos landingSpot, int minHeight) {
-        BlockPos.MutableBlockPos mut = new BlockPos.MutableBlockPos(landingSpot.getX(), landingSpot.getY(), landingSpot.getZ());
-        final int maxY = mut.getY() + minHeight;
-        for (int y = mut.getY() + 1; y <= maxY; y++) {
-            mut.set(mut.getX(), y, mut.getZ());
-            if (!(ctx.world().getBlockState(mut).getBlock() instanceof AirBlock)) {
-                return false;
+        BlockPos.MutableBlockPos mut = new BlockPos.MutableBlockPos();
+        final int maxY = landingSpot.getY() + minHeight;
+        // Player AABB is 0.6 wide; a 1x1 shaft lets the hitbox clip walls on the way down.
+        for (int x = -1; x <= 1; x++) {
+            for (int z = -1; z <= 1; z++) {
+                for (int y = landingSpot.getY() + 1; y <= maxY; y++) {
+                    mut.set(landingSpot.getX() + x, y, landingSpot.getZ() + z);
+                    if (!(ctx.world().getBlockState(mut).getBlock() instanceof AirBlock)) {
+                        return false;
+                    }
+                }
             }
         }
         return true;
@@ -657,7 +688,7 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         int examined = 0;
         while (!queue.isEmpty() && examined++ < LANDING_SEARCH_NODE_LIMIT) {
             BetterBlockPos pos = queue.poll();
-            if (ctx.world().isLoaded(pos) && isInBounds(pos) && ctx.world().getBlockState(pos).getBlock() == Blocks.AIR) {
+            if (ctx.world().isLoaded(pos) && isInBounds(pos) && ctx.world().getBlockState(pos).isAir()) {
                 BetterBlockPos actualLandingSpot = checkLandingSpot(pos, checkedPositions);
                 if (actualLandingSpot != null && isColumnAir(actualLandingSpot, LANDING_COLUMN_HEIGHT) && hasAirBubble(actualLandingSpot.above(LANDING_COLUMN_HEIGHT)) && !badLandingSpots.contains(actualLandingSpot.above(LANDING_COLUMN_HEIGHT))) {
                     return actualLandingSpot.above(LANDING_COLUMN_HEIGHT);

@@ -127,11 +127,11 @@ sourceSets {
         compileClasspath += api.output
         runtimeClasspath += api.output
     }
-    test {
-        compileClasspath += main.compileClasspath + main.runtimeClasspath + main.output
-        runtimeClasspath += main.compileClasspath + main.runtimeClasspath + main.output
-    }
     testkit
+    test {
+        compileClasspath += main.compileClasspath + main.runtimeClasspath + main.output + testkit.output
+        runtimeClasspath += main.compileClasspath + main.runtimeClasspath + main.output + testkit.output
+    }
     deterministicTest {
         compileClasspath += testkit.output
         runtimeClasspath += testkit.output
