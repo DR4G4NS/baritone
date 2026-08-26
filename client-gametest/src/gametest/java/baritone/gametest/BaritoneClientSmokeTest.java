@@ -149,14 +149,14 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
     private static void runOpenOverworldElytraCommandScenario(ClientGameTestContext context,
                                                                TestSingleplayerContext singleplayer) {
         prepareLoadedElytraCorridor(context, singleplayer, "minecraft:overworld", Level.OVERWORLD,
-                "minecraft:stone", 69, 70, 104);
+                "minecraft:stone", 69, 70, 120);
         runElytraFlight(context, 40, false, singleplayer);
     }
 
     private static void runNetherLavaElytraCommandScenario(ClientGameTestContext context,
                                                             TestSingleplayerContext singleplayer) {
         prepareLoadedElytraCorridor(context, singleplayer, "minecraft:the_nether", Level.NETHER,
-                "minecraft:netherrack", 79, 80, 104);
+                "minecraft:netherrack", 79, 80, 120);
         runElytraFlight(context, 64, true, singleplayer);
     }
 
@@ -172,13 +172,13 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand("gamemode creative " + PLAYER);
         singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         giveBoostingRockets(singleplayer, 32);
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5");
         context.waitFor(client -> client.player != null && client.player.level().dimension() == dimension, 400);
         context.waitTicks(40);
         singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 32");
         singleplayer.getServer().runCommand(in + "fill -16 " + floorY + " -16 80 " + floorY + " 16 " + floorBlock);
         fillAirBox(singleplayer, in, -16, airMinY, -16, 80, airMaxY, 16);
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         context.waitTicks(20);
     }
