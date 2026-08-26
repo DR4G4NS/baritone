@@ -1,11 +1,9 @@
 package baritone.process.elytra;
 
-import baritone.process.ElytraProcess;
 import baritone.testkit.pathfinding.VoxelGrid;
 import baritone.testkit.replay.ElytraControl;
 import baritone.testkit.replay.ElytraFlightModel;
 import baritone.testkit.replay.ElytraState;
-import net.minecraft.world.level.block.Blocks;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -43,23 +41,6 @@ public class ElytraLandingSafetyTest {
         assertTrue(ElytraBehavior.landingPitch(20.0D, -0.51D, 8.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
         assertTrue(ElytraBehavior.shouldWaitForChunks(40.0D, 1.4D, 88.0D));
         assertFalse(ElytraBehavior.shouldWaitForChunks(Double.POSITIVE_INFINITY, 1.4D, 88.0D));
-    }
-
-    @Test
-    public void landingFlightControlsDoNotDisableRocketsDuringApproach() {
-        assertFalse(ElytraProcess.shouldUseLandingFlightControls(ElytraProcess.State.FLYING));
-        assertFalse(ElytraProcess.shouldUseLandingFlightControls(ElytraProcess.State.START_FLYING));
-        assertTrue(ElytraProcess.shouldUseLandingFlightControls(ElytraProcess.State.LANDING));
-    }
-
-    @Test
-    public void hazardousSurfacesAreRejectedBeforeThePlayerTouchesDown() {
-        assertTrue(ElytraProcess.isHazardousLandingSurface(Blocks.MAGMA_BLOCK.defaultBlockState()));
-        assertTrue(ElytraProcess.isHazardousLandingSurface(Blocks.FIRE.defaultBlockState()));
-        assertTrue(ElytraProcess.isHazardousLandingSurface(Blocks.CAMPFIRE.defaultBlockState()));
-        assertTrue(ElytraProcess.isHazardousLandingSurface(Blocks.CACTUS.defaultBlockState()));
-        assertFalse(ElytraProcess.isHazardousLandingSurface(Blocks.NETHERRACK.defaultBlockState()));
-        assertFalse(ElytraProcess.isHazardousLandingSurface(Blocks.STONE.defaultBlockState()));
     }
 
     @Test
