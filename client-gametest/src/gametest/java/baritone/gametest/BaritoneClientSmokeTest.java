@@ -160,23 +160,17 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
 
     private static void runNetherLavaElytraCommandScenario(ClientGameTestContext context,
                                                             TestSingleplayerContext singleplayer) {
+        final String in = "execute in minecraft:the_nether run ";
         singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         giveBoostingRockets(singleplayer, 32);
-        singleplayer.getServer().runCommand("execute in minecraft:the_nether run tp " + PLAYER + " 0.5 95 0.5");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
         context.waitFor(client -> client.player != null && client.player.level().dimension() == Level.NETHER, 400);
-        for (int minX : new int[]{-8, 22, 52}) {
-            int maxX = Math.min(minX + 29, 80);
-            for (int minZ : new int[]{-64, -31, 2, 35}) {
-                int maxZ = Math.min(minZ + 32, 64);
-                singleplayer.getServer().runCommand(
-                        "execute in minecraft:the_nether run fill "
-                                + minX + " 80 " + minZ + " "
-                                + maxX + " 104 " + maxZ + " minecraft:air"
-                );
-            }
-        }
-        singleplayer.getServer().runCommand("execute in minecraft:the_nether run fill -8 79 -64 80 79 64 minecraft:netherrack");
-        context.waitTicks(10);
+        context.waitTicks(40);
+        singleplayer.getServer().runCommand(in + "forceload add -2 -2 6 2");
+        singleplayer.getServer().runCommand(in + "fill -16 79 -16 80 79 16 minecraft:netherrack");
+        fillAirBox(singleplayer, in, -16, 80, -16, 80, 104, 16);
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
+        context.waitTicks(20);
         runElytraFlight(context, 64, true, singleplayer);
     }
 
@@ -390,9 +384,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
                 + ", health=" + player.getHealth()
                 + ", lava=" + player.isInLava()
                 + ", fire=" + player.isOnFire();
-        if (player.isAlive()) {
-            lastFlightState.set(state);
-        }
+        lastFlightState.set(state);
         if (!player.isAlive() || player.isInLava() || player.isOnFire()) {
             touchedEnvironmentalHazard.set(true);
         }
