@@ -192,19 +192,20 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         final int targetX = 24;
         final String in = "execute in " + dimensionId + " run ";
         singleplayer.getServer().runCommand("difficulty peaceful");
-        singleplayer.getServer().runCommand("gamerule doMobSpawning false");
-        singleplayer.getServer().runCommand("gamerule fallDamage true");
         if (dimension == Level.END) {
             singleplayer.getServer().runCommand(in + "kill @e[type=minecraft:ender_dragon]");
         }
-        singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " 16 " + surfaceBlock);
-        singleplayer.getServer().runCommand(in + "fill -16 " + (surfaceY + 1) + " -16 80 120 16 minecraft:air");
         singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         giveBoostingRockets(singleplayer, 32);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
-        singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         context.waitFor(client -> client.player != null && client.player.level().dimension() == dimension, 400);
-        context.waitTicks(15);
+        context.waitTicks(40);
+        singleplayer.getServer().runCommand(in + "forceload add -2 -2 5 1");
+        singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " 16 " + surfaceBlock);
+        singleplayer.getServer().runCommand(in + "fill -16 " + (surfaceY + 1) + " -16 80 120 16 minecraft:air");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
+        singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
+        context.waitTicks(20);
         runElytraLanding(context, scenario, targetX, destY, surfaceY);
         context.takeScreenshot("elytra-landing-" + scenario);
     }
