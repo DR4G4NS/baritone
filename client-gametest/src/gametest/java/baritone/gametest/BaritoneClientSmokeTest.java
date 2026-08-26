@@ -148,34 +148,40 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
 
     private static void runOpenOverworldElytraCommandScenario(ClientGameTestContext context,
                                                                TestSingleplayerContext singleplayer) {
-        final String in = "execute in minecraft:overworld run ";
-        singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
-        giveBoostingRockets(singleplayer, 32);
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
-        context.waitFor(client -> client.player != null && client.player.level().dimension() == Level.OVERWORLD, 400);
-        context.waitTicks(40);
-        singleplayer.getServer().runCommand(in + "forceload add -2 -2 6 2");
-        singleplayer.getServer().runCommand(in + "fill -16 69 -16 80 69 16 minecraft:stone");
-        fillAirBox(singleplayer, in, -16, 70, -16, 80, 104, 16);
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
-        context.waitTicks(20);
+        prepareLoadedElytraCorridor(context, singleplayer, "minecraft:overworld", Level.OVERWORLD,
+                "minecraft:stone", 69, 70, 104);
         runElytraFlight(context, 40, false, singleplayer);
     }
 
     private static void runNetherLavaElytraCommandScenario(ClientGameTestContext context,
                                                             TestSingleplayerContext singleplayer) {
-        final String in = "execute in minecraft:the_nether run ";
+        prepareLoadedElytraCorridor(context, singleplayer, "minecraft:the_nether", Level.NETHER,
+                "minecraft:netherrack", 79, 80, 104);
+        runElytraFlight(context, 64, true, singleplayer);
+    }
+
+    private static void prepareLoadedElytraCorridor(ClientGameTestContext context,
+                                                    TestSingleplayerContext singleplayer,
+                                                    String dimensionId,
+                                                    net.minecraft.resources.ResourceKey<Level> dimension,
+                                                    String floorBlock,
+                                                    int floorY,
+                                                    int airMinY,
+                                                    int airMaxY) {
+        final String in = "execute in " + dimensionId + " run ";
+        singleplayer.getServer().runCommand("gamemode creative " + PLAYER);
         singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         giveBoostingRockets(singleplayer, 32);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
-        context.waitFor(client -> client.player != null && client.player.level().dimension() == Level.NETHER, 400);
+        context.waitFor(client -> client.player != null && client.player.level().dimension() == dimension, 400);
         context.waitTicks(40);
         singleplayer.getServer().runCommand(in + "forceload add -2 -2 6 2");
-        singleplayer.getServer().runCommand(in + "fill -16 79 -16 80 79 16 minecraft:netherrack");
-        fillAirBox(singleplayer, in, -16, 80, -16, 80, 104, 16);
+        singleplayer.getServer().runCommand(in + "fill -16 " + floorY + " -16 80 " + floorY + " 16 " + floorBlock);
+        fillAirBox(singleplayer, in, -16, airMinY, -16, 80, airMaxY, 16);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 95 0.5");
-        context.waitTicks(20);
-        runElytraFlight(context, 64, true, singleplayer);
+        singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
+        singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
+        context.waitTicks(5);
     }
 
     private static void runDimensionElytraLandingScenario(ClientGameTestContext context,
@@ -303,6 +309,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
 
     private static void runElytraFlight(ClientGameTestContext context, int targetX, boolean addLateLava,
                                          TestSingleplayerContext singleplayer) {
+        singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         context.waitFor(client -> client.player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST)
                 .is(Items.ELYTRA), 200);
         context.runOnClient(client -> {
