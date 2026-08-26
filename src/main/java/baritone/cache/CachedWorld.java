@@ -39,7 +39,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * @author Brady
@@ -66,7 +71,7 @@ public final class CachedWorld implements ICachedWorld, Helper {
      * Queue of positions to pack. Refers to the toPackMap, in that every element of this queue will be a
      * key in that map.
      */
-    private final LinkedBlockingQueue<ChunkPos> toPackQueue = new LinkedBlockingQueue<>();
+    private final LinkedBlockingQueue<ChunkPos> toPackQueue;
 
     /**
      * All chunk positions pending packing. This map will be updated in-place if a new update to the chunk occurs
@@ -78,7 +83,18 @@ public final class CachedWorld implements ICachedWorld, Helper {
 
     private final ResourceKey<Level> dimensionId;
 
+    private final ScheduledExecutorService workers;
+
+    private final AtomicBoolean closed = new AtomicBoolean();
+
     CachedWorld(Path directory, DimensionType dimension, ResourceKey<Level> dimensionId) {
+        this(directory, dimension, dimensionId, Math.max(1, Baritone.settings().chunkPackerQueueMaxSize.value));
+    }
+
+    CachedWorld(Path directory, DimensionType dimension, ResourceKey<Level> dimensionId, int packingQueueCapacity) {
+        if (packingQueueCapacity <= 0) {
+            throw new IllegalArgumentException("Packing queue capacity must be positive");
+        }
         if (!Files.exists(directory)) {
             try {
                 Files.createDirectories(directory);
@@ -88,29 +104,54 @@ public final class CachedWorld implements ICachedWorld, Helper {
         this.directory = directory.toString();
         this.dimension = dimension;
         this.dimensionId = dimensionId;
-        System.out.println("Cached world directory: " + directory);
-        Baritone.getExecutor().execute(new PackerThread());
-        Baritone.getExecutor().execute(() -> {
-            try {
-                Thread.sleep(30000);
-                while (true) {
-                    // since a region only saves if it's been modified since its last save
-                    // saving every 10 minutes means that once it's time to exit
-                    // we'll only have a couple regions to save
-                    save();
-                    Thread.sleep(600000);
-                }
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
+        this.toPackQueue = new LinkedBlockingQueue<>(packingQueueCapacity);
+        AtomicInteger threadIds = new AtomicInteger();
+        this.workers = Executors.newScheduledThreadPool(2, runnable -> {
+            Thread thread = new Thread(runnable, "Baritone Cache Worker #" + threadIds.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
         });
+        System.out.println("Cached world directory: " + directory);
+        this.workers.execute(new PackerThread());
+        this.workers.scheduleWithFixedDelay(() -> {
+            try {
+                save();
+            } catch (Throwable throwable) {
+                throwable.printStackTrace();
+            }
+        }, 30L, 600L, TimeUnit.SECONDS);
     }
 
     @Override
-    public final void queueForPacking(LevelChunk chunk) {
-        if (toPackMap.put(chunk.getPos(), chunk) == null) {
-            toPackQueue.add(chunk.getPos());
+    public final synchronized void queueForPacking(LevelChunk chunk) {
+        if (closed.get()) {
+            return;
         }
+        ChunkPos position = chunk.getPos();
+        if (toPackMap.put(position, chunk) == null && !toPackQueue.offer(position)) {
+            toPackMap.remove(position, chunk);
+        }
+    }
+
+    synchronized void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        toPackQueue.clear();
+        toPackMap.clear();
+        workers.shutdownNow();
+    }
+
+    boolean isClosed() {
+        return closed.get();
+    }
+
+    boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
+        return workers.awaitTermination(timeout, unit);
+    }
+
+    int packingQueueCapacity() {
+        return toPackQueue.size() + toPackQueue.remainingCapacity();
     }
 
     @Override
@@ -157,13 +198,16 @@ public final class CachedWorld implements ICachedWorld, Helper {
         return res;
     }
 
-    private void updateCachedChunk(CachedChunk chunk) {
+    private synchronized void updateCachedChunk(CachedChunk chunk) {
+        if (closed.get()) {
+            return;
+        }
         CachedRegion region = getOrCreateRegion(chunk.x >> 5, chunk.z >> 5);
         region.updateCachedChunk(chunk.x & 31, chunk.z & 31, chunk);
     }
 
     @Override
-    public final void save() {
+    public final synchronized void save() {
         if (!Baritone.settings().chunkCaching.value) {
             System.out.println("Not saving to disk; chunk caching is disabled.");
             allRegions().forEach(region -> {
@@ -307,18 +351,20 @@ public final class CachedWorld implements ICachedWorld, Helper {
     private class PackerThread implements Runnable {
 
         public void run() {
-            while (true) {
+            while (!closed.get()) {
                 try {
                     ChunkPos pos = toPackQueue.take();
                     LevelChunk chunk = toPackMap.remove(pos);
-                    if (toPackQueue.size() > Baritone.settings().chunkPackerQueueMaxSize.value) {
+                    if (chunk == null || closed.get()) {
                         continue;
                     }
                     CachedChunk cached = ChunkPacker.pack(chunk);
-                    CachedWorld.this.updateCachedChunk(cached);
+                    if (!closed.get()) {
+                        CachedWorld.this.updateCachedChunk(cached);
+                    }
                     //System.out.println("Processed chunk at " + chunk.x + "," + chunk.z);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Thread.currentThread().interrupt();
                     break;
                 } catch (Throwable th) {
                     // in the case of an exception, keep consuming from the queue so as not to leak memory

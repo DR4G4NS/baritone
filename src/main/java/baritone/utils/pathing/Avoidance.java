@@ -38,7 +38,7 @@ public class Avoidance {
     private final int centerZ;
     private final double coefficient;
     private final int radius;
-    private final int radiusSq;
+    private final long radiusSq;
 
     public Avoidance(BlockPos center, double coefficient, int radius) {
         this(center.getX(), center.getY(), center.getZ(), coefficient, radius);
@@ -50,13 +50,13 @@ public class Avoidance {
         this.centerZ = centerZ;
         this.coefficient = coefficient;
         this.radius = radius;
-        this.radiusSq = radius * radius;
+        this.radiusSq = (long) radius * radius;
     }
 
     public double coefficient(int x, int y, int z) {
-        int xDiff = x - centerX;
-        int yDiff = y - centerY;
-        int zDiff = z - centerZ;
+        double xDiff = (double) x - centerX;
+        double yDiff = (double) y - centerY;
+        double zDiff = (double) z - centerZ;
         return xDiff * xDiff + yDiff * yDiff + zDiff * zDiff <= radiusSq ? coefficient : 1.0D;
     }
 
@@ -86,9 +86,15 @@ public class Avoidance {
         for (int x = -radius; x <= radius; x++) {
             for (int y = -radius; y <= radius; y++) {
                 for (int z = -radius; z <= radius; z++) {
-                    if (x * x + y * y + z * z <= radius * radius) {
-                        long hash = BetterBlockPos.longHash(centerX + x, centerY + y, centerZ + z);
-                        map.put(hash, map.get(hash) * coefficient);
+                    if ((double) x * x + (double) y * y + (double) z * z <= radiusSq) {
+                        long blockX = (long) centerX + x;
+                        long blockY = (long) centerY + y;
+                        long blockZ = (long) centerZ + z;
+                        if (!BetterBlockPos.isValidForLongSerialization(blockX, blockY, blockZ)) {
+                            continue;
+                        }
+                        long positionKey = BetterBlockPos.serializeToLong((int) blockX, (int) blockY, (int) blockZ);
+                        map.put(positionKey, map.get(positionKey) * coefficient);
                     }
                 }
             }

@@ -48,11 +48,13 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.Fireworks;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AirBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkSource;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -61,12 +63,15 @@ import java.util.*;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.UnaryOperator;
 
 import static baritone.utils.BaritoneMath.fastCeil;
 import static baritone.utils.BaritoneMath.fastFloor;
 
 public final class ElytraBehavior implements Helper {
+    static final double LANDING_FLARE_DESCENT_SPEED = -0.35;
+    static final float LANDING_FLARE_PITCH = -30.0F;
     private final Baritone baritone;
     private final IPlayerContext ctx;
 
@@ -102,6 +107,9 @@ public final class ElytraBehavior implements Helper {
     private int minimumBoostTicks;
 
     private boolean deployedFireworkLastTick;
+    private boolean landingRecoveryRocketUsed;
+    private boolean noFireworksWarningAnnounced;
+    private int chunkWaitRocketCooldown;
     private final int[] nextTickBoostCounter;
 
     private BlockStateInterface bsi;
@@ -110,6 +118,8 @@ public final class ElytraBehavior implements Helper {
     private final boolean appendDestination;
 
     private final ExecutorService solverExecutor;
+    private final Object solverLifecycleLock = new Object();
+    private final AtomicBoolean closing = new AtomicBoolean();
     private Future<Solution> solver;
     private Solution pendingSolution;
     private boolean solveNextTick;
@@ -129,10 +139,29 @@ public final class ElytraBehavior implements Helper {
         this.process = process;
         this.destination = new BetterBlockPos(destination);
         this.appendDestination = appendDestination;
-        this.solverExecutor = Executors.newSingleThreadExecutor();
+        this.solverExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "Baritone Elytra Solver");
+            thread.setDaemon(true);
+            return thread;
+        });
         this.nextTickBoostCounter = new int[2];
 
-        this.context = new NetherPathfinderContext(Baritone.settings().elytraNetherSeed.value);
+        final boolean netherPrediction = ctx.world().dimension() == Level.NETHER
+                && Baritone.settings().elytraPredictTerrain.value
+                && ctx.playerFeet().y >= 0 && ctx.playerFeet().y < 128
+                && this.destination.y >= 0 && this.destination.y < 128;
+        final int verticalOffset = ElytraVerticalWindow.choose(
+                ctx.world().getMinY(),
+                ctx.world().getHeight(),
+                ctx.playerFeet().y,
+                this.destination.y,
+                netherPrediction
+        );
+        this.context = new NetherPathfinderContext(
+                Baritone.settings().elytraNetherSeed.value,
+                verticalOffset,
+                netherPrediction
+        );
         this.boi = new BlockStateOctreeInterface(context);
     }
 
@@ -268,6 +297,10 @@ public final class ElytraBehavior implements Helper {
 
         private void setPath(final UnpackedSegment segment) {
             List<BetterBlockPos> path = segment.collect();
+            CorridorLazyThetaStar.Result refined = CorridorLazyThetaStar.refine(path, ElytraBehavior.this::isCorridorShortcutValid);
+            path = new ArrayList<>(refined.path());
+            logVerbose(String.format("Lazy Theta* corridor refinement: %s points, %s expansions, %s swept-volume raycasts",
+                    path.size(), refined.expansions(), refined.raycasts()));
             if (ElytraBehavior.this.appendDestination) {
                 BlockPos dest = ElytraBehavior.this.destination;
                 BlockPos last = !path.isEmpty() ? path.get(path.size() - 1) : null;
@@ -289,14 +322,38 @@ public final class ElytraBehavior implements Helper {
             return this.path;
         }
 
+        private void setDirectLandingPath(BetterBlockPos start, BetterBlockPos end) {
+            this.path = new NetherPath(List.of(start, end));
+            this.completePath = true;
+            this.recalculating = false;
+            this.playerNear = 0;
+            this.maxPlayerNear = 0;
+            this.ticksNearUnchanged = 0;
+        }
+
         public int getNear() {
             return this.playerNear;
+        }
+
+        public double loadedHorizonDistance() {
+            if (this.path.isEmpty()) {
+                return 0.0D;
+            }
+            double distance = ctx.player().position().distanceTo(this.path.getVec(this.playerNear));
+            for (int i = this.playerNear; i < this.path.size(); i++) {
+                if (!ctx.world().isLoaded(this.path.get(i))) {
+                    return distance;
+                }
+                if (i + 1 < this.path.size()) {
+                    distance += this.path.getVec(i).distanceTo(this.path.getVec(i + 1));
+                }
+            }
+            return Double.POSITIVE_INFINITY;
         }
 
         // mickey resigned
         private CompletableFuture<Void> path0(BlockPos src, BlockPos dst, UnaryOperator<UnpackedSegment> operator) {
             return ElytraBehavior.this.context.pathFindAsync(src, dst)
-                    .thenApply(UnpackedSegment::from)
                     .thenApply(operator)
                     .thenAcceptAsync(this::setPath, ctx.minecraft()::execute);
         }
@@ -374,6 +431,12 @@ public final class ElytraBehavior implements Helper {
             }
 
             final int last = this.path.size() - 1;
+            if (!this.completePath
+                    && !ElytraBehavior.this.context.containsWorldY(ElytraBehavior.this.destination.y)
+                    && ctx.player().distanceToSqr(this.path.get(last).getCenter()) < 16 * 16) {
+                process.requestVerticalRecenter();
+                return;
+            }
             if (!this.completePath && ctx.world().isLoaded(this.path.get(last))) {
                 this.pathNextSegment(last);
             }
@@ -474,15 +537,66 @@ public final class ElytraBehavior implements Helper {
         }
     }
 
-    public void destroy() {
-        if (this.solver != null) {
-            this.solver.cancel(true);
+    public void pathToLanding() {
+        final BetterBlockPos start = ctx.playerFeet();
+        if (this.isDirectLandingPathClear(this.destination)) {
+            this.pathManager.setDirectLandingPath(start, this.destination);
+        } else {
+            this.repackChunks();
+            this.pathTo();
         }
-        this.solverExecutor.shutdown();
+    }
+
+    private boolean isDirectLandingPathClear(BetterBlockPos end) {
+        final Vec3 playerPosition = ctx.player().position();
+        final Vec3 destinationPosition = end.getCenter();
+        final double margin = Math.max(0.0D, Baritone.settings().elytraMinimumAvoidance.value);
+        final AABB bounds = ctx.player().getBoundingBox().inflate(margin);
+        final double[] xs = new double[]{bounds.minX, bounds.maxX};
+        final double[] ys = new double[]{bounds.minY, bounds.maxY};
+        final double[] zs = new double[]{bounds.minZ, bounds.maxZ};
+        for (double x : xs) {
+            for (double y : ys) {
+                for (double z : zs) {
+                    final Vec3 offset = new Vec3(
+                            x - playerPosition.x,
+                            y - playerPosition.y,
+                            z - playerPosition.z
+                    );
+                    if (ctx.world().clip(new ClipContext(
+                            playerPosition.add(offset),
+                            destinationPosition.add(offset),
+                            ClipContext.Block.COLLIDER,
+                            ClipContext.Fluid.ANY,
+                            ctx.player()
+                    )).getType() != HitResult.Type.MISS) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    public void destroy() {
+        if (!this.closing.compareAndSet(false, true)) {
+            return;
+        }
+        synchronized (this.solverLifecycleLock) {
+            this.solveNextTick = false;
+            if (this.solver != null) {
+                this.solver.cancel(true);
+            }
+            this.solverExecutor.shutdownNow();
+        }
         try {
-            while (!this.solverExecutor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS)) {}
+            if (!this.solverExecutor.awaitTermination(10L, TimeUnit.SECONDS)) {
+                System.err.println("Baritone Elytra solver did not terminate; preserving native context to avoid use-after-free");
+                return;
+            }
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            Thread.currentThread().interrupt();
+            return;
         }
         this.context.destroy();
     }
@@ -512,6 +626,9 @@ public final class ElytraBehavior implements Helper {
     }
 
     public void onTick() {
+        if (this.closing.get()) {
+            return;
+        }
         synchronized (this.context.cullingLock) {
             this.onTick0();
         }
@@ -525,13 +642,21 @@ public final class ElytraBehavior implements Helper {
     private void onTick0() {
         // Fetch the previous solution, regardless of if it's going to be used
         this.pendingSolution = null;
-        if (this.solver != null) {
+        final Future<Solution> currentSolver;
+        synchronized (this.solverLifecycleLock) {
+            currentSolver = this.solver;
+        }
+        if (currentSolver != null) {
             try {
-                this.pendingSolution = this.solver.get();
+                this.pendingSolution = currentSolver.get();
             } catch (Exception ignored) {
                 // it doesn't matter if get() fails since the solution can just be recalculated synchronously
             } finally {
-                this.solver = null;
+                synchronized (this.solverLifecycleLock) {
+                    if (this.solver == currentSolver) {
+                        this.solver = null;
+                    }
+                }
             }
         }
 
@@ -543,6 +668,9 @@ public final class ElytraBehavior implements Helper {
         }
         if (this.remainingSetBackTicks > 0) {
             this.remainingSetBackTicks--;
+        }
+        if (this.chunkWaitRocketCooldown > 0) {
+            this.chunkWaitRocketCooldown--;
         }
         if (!this.getAttachedFirework().isPresent()) {
             this.minimumBoostTicks = 0;
@@ -578,11 +706,19 @@ public final class ElytraBehavior implements Helper {
      * Called by {@link baritone.process.ElytraProcess#onTick(boolean, boolean)} when the process is in control and the player is flying
      */
     public void tick() {
-        if (this.pathManager.getPath().isEmpty()) {
+        if (this.closing.get() || this.pathManager.getPath().isEmpty()) {
             return;
         }
 
         trySwapElytra();
+
+        final ElytraFlightProfile profile = ElytraFlightProfile.fromSetting(Baritone.settings().elytraFlightProfile.value);
+        final double horizontalSpeed = ctx.player().getDeltaMovement().multiply(1.0D, 0.0D, 1.0D).length();
+        final double loadedHorizon = this.pathManager.loadedHorizonDistance();
+        if (!this.landingMode && shouldWaitForChunks(loadedHorizon, horizontalSpeed, profile.loadedHorizon())) {
+            holdForChunkLoading();
+            return;
+        }
 
         if (ctx.player().horizontalCollision) {
             logVerbose("hbonk");
@@ -608,6 +744,7 @@ public final class ElytraBehavior implements Helper {
         }
 
         final boolean inLava = ctx.player().isInLava();
+        final boolean environmentalEmergency = inLava || ctx.player().isOnFire();
         if (inLava) {
             baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
         }
@@ -617,8 +754,28 @@ public final class ElytraBehavior implements Helper {
             return;
         }
 
-        baritone.getLookBehavior().updateTarget(solution.rotation, false);
-
+        final double verticalSpeed = ctx.player().getDeltaMovement().y;
+        final double heightAboveLandingSurface = this.landingMode && this.destination != null
+                ? solution.context.start.y - (this.destination.getY() - ElytraProcess.LANDING_COLUMN_HEIGHT - 0.5D)
+                : Double.POSITIVE_INFINITY;
+        final boolean needsLandingRecovery = this.landingMode
+                && requiresLandingBoost(heightAboveLandingSurface, verticalSpeed, this.landingRecoveryRocketUsed);
+        final boolean emergencyLandingBoost = needsLandingRecovery
+                && ctx.playerRotations().getPitch() <= -20.0F;
+        final Rotation commandedRotation;
+        if (environmentalEmergency) {
+            commandedRotation = new Rotation(solution.rotation.getYaw(), Math.min(solution.rotation.getPitch(), -45.0F));
+        } else if (this.landingMode) {
+            commandedRotation = new Rotation(
+                    solution.rotation.getYaw(),
+                    needsLandingRecovery
+                            ? -25.0F
+                            : landingPitch(heightAboveLandingSurface, verticalSpeed, solution.rotation.getPitch())
+            );
+        } else {
+            commandedRotation = solution.rotation;
+        }
+        baritone.getLookBehavior().updateTarget(commandedRotation, false);
         if (!solution.solvedPitch) {
             logVerbose("no pitch solution, probably gonna crash in a few ticks LOL!!!");
             return;
@@ -626,22 +783,38 @@ public final class ElytraBehavior implements Helper {
             this.aimPos = new BetterBlockPos(solution.goingTo.x, solution.goingTo.y, solution.goingTo.z);
         }
 
-        this.tickUseFireworks(
+        final boolean forceUseFirework = this.landingMode
+                ? environmentalEmergency || emergencyLandingBoost
+                : solution.forceUseFirework || environmentalEmergency;
+        final boolean deployedRecoveryRocket = this.tickUseFireworks(
                 solution.context.start,
                 solution.goingTo,
                 solution.context.boost.isBoosted(),
-                solution.forceUseFirework || inLava
+                forceUseFirework
         );
+        if (emergencyLandingBoost && deployedRecoveryRocket) {
+            this.landingRecoveryRocketUsed = true;
+        }
     }
 
     public void onPostTick(TickEvent event) {
-        if (event.getType() == TickEvent.Type.IN && this.solveNextTick) {
+        if (event.getType() != TickEvent.Type.IN) {
+            return;
+        }
+        synchronized (this.solverLifecycleLock) {
+            if (this.closing.get() || !this.solveNextTick) {
+                return;
+            }
             // We're at the end of the tick, the player's position likely updated and the closest path node could've
             // changed. Updating it now will avoid unnecessary recalculation on the main thread.
             this.pathManager.updatePlayerNear();
 
             final SolverContext context = this.new SolverContext(true);
-            this.solver = this.solverExecutor.submit(() -> this.solveAngles(context));
+            try {
+                this.solver = this.solverExecutor.submit(() -> this.solveAngles(context));
+            } catch (RejectedExecutionException ignored) {
+                // Destruction won the race with this end-of-tick submission.
+            }
             this.solveNextTick = false;
         }
     }
@@ -733,15 +906,17 @@ public final class ElytraBehavior implements Helper {
         return solution;
     }
 
-    private void tickUseFireworks(final Vec3 start, final Vec3 goingTo, final boolean isBoosted, final boolean forceUseFirework) {
+    private boolean tickUseFireworks(final Vec3 start, final Vec3 goingTo, final boolean isBoosted, final boolean forceUseFirework) {
         if (this.remainingSetBackTicks > 0) {
             logDebug("waiting for elytraFireworkSetbackUseDelay: " + this.remainingSetBackTicks);
-            return;
+            return false;
         }
-        if (this.landingMode) {
-            return;
+        if (this.landingMode && !forceUseFirework) {
+            return false;
         }
-        final boolean useOnDescend = !Baritone.settings().elytraConserveFireworks.value || ctx.player().position().y < goingTo.y + 5;
+        final ElytraFlightProfile profile = ElytraFlightProfile.fromSetting(Baritone.settings().elytraFlightProfile.value);
+        final boolean conserveOnDescent = profile.conserveOnDescent(Baritone.settings().elytraConserveFireworks.value);
+        final boolean useOnDescend = !conserveOnDescent || ctx.player().position().y < goingTo.y + 5;
         final double currentSpeed = new Vec3(
                 ctx.player().getDeltaMovement().x,
                 // ignore y component if we are BOTH below where we want to be AND descending
@@ -749,7 +924,7 @@ public final class ElytraBehavior implements Helper {
                 ctx.player().getDeltaMovement().z
         ).lengthSqr();
 
-        final double elytraFireworkSpeed = Baritone.settings().elytraFireworkSpeed.value;
+        final double elytraFireworkSpeed = profile.targetSpeed(Baritone.settings().elytraFireworkSpeed.value);
         if (this.remainingFireworkTicks <= 0 && (forceUseFirework || (!isBoosted
                 && useOnDescend
                 && (ctx.player().position().y < goingTo.y - 5 || start.distanceTo(new Vec3(goingTo.x + 0.5, ctx.player().position().y, goingTo.z + 0.5)) > 5) // UGH!!!!!!!
@@ -759,15 +934,21 @@ public final class ElytraBehavior implements Helper {
             // TODO: Take the minimum boost time into account?
             if (!baritone.getInventoryBehavior().throwaway(true, ElytraBehavior::isBoostingFireworks) &&
                     !baritone.getInventoryBehavior().throwaway(true, ElytraBehavior::isFireworks)) {
-                logDirect("no fireworks");
-                return;
+                if (!this.noFireworksWarningAnnounced) {
+                    logDirect("no fireworks");
+                    this.noFireworksWarningAnnounced = true;
+                }
+                return false;
             }
+            this.noFireworksWarningAnnounced = false;
             logVerbose("attempting to use firework" + (forceUseFirework ? " (forced)" : ""));
             ctx.playerController().processRightClick(ctx.player(), ctx.world(), InteractionHand.MAIN_HAND);
             this.minimumBoostTicks = 10 * (1 + getFireworkBoost(ctx.player().getItemInHand(InteractionHand.MAIN_HAND)).orElse(0));
             this.remainingFireworkTicks = 10;
             this.deployedFireworkLastTick = true;
+            return true;
         }
+        return false;
     }
 
     private final class SolverContext {
@@ -997,9 +1178,136 @@ public final class ElytraBehavior implements Helper {
                     clear = false;
                 }
             }
-            return clear;
+            return clear && (ignoreLava || isFluidSweepClear(
+                    context.boundingBox.inflate(ElytraFlightProfile.fromSetting(
+                            Baritone.settings().elytraFlightProfile.value).fluidMargin()),
+                    start,
+                    dest
+            ));
         }
 
+        return this.context.raytrace(8, src, dst, NetherPathfinderContext.Visibility.ALL)
+                && (ignoreLava || isFluidSweepClear(
+                context.boundingBox.inflate(ElytraFlightProfile.fromSetting(
+                        Baritone.settings().elytraFlightProfile.value).fluidMargin()),
+                start,
+                dest
+        ));
+    }
+
+    private boolean isFluidSweepClear(AABB box, Vec3 start, Vec3 destination) {
+        final double ox = destination.x - start.x;
+        final double oy = destination.y - start.y;
+        final double oz = destination.z - start.z;
+        final double[] xs = {box.minX, box.maxX};
+        final double[] ys = {box.minY, box.maxY};
+        final double[] zs = {box.minZ, box.maxZ};
+        for (double x : xs) {
+            for (double y : ys) {
+                for (double z : zs) {
+                    final Vec3 from = new Vec3(x, y, z);
+                    final Vec3 to = new Vec3(x + ox, y + oy, z + oz);
+                    final HitResult hit = ctx.world().clip(new ClipContext(
+                            from,
+                            to,
+                            ClipContext.Block.COLLIDER,
+                            ClipContext.Fluid.ANY,
+                            ctx.player()
+                    ));
+                    if (hit instanceof BlockHitResult blockHit
+                            && !ctx.world().getFluidState(blockHit.getBlockPos()).isEmpty()) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    static boolean requiresLandingFlare(double verticalSpeed) {
+        return verticalSpeed < LANDING_FLARE_DESCENT_SPEED;
+    }
+
+    static boolean requiresLandingBoost(double heightAboveSurface, double verticalSpeed, boolean recoveryRocketUsed) {
+        return !recoveryRocketUsed
+                && heightAboveSurface > 6.0D
+                && heightAboveSurface <= 14.0D
+                && verticalSpeed < -0.18D;
+    }
+
+    static float landingPitch(double heightAboveSurface, double verticalSpeed, float solvedPitch) {
+        if (requiresLandingFlare(verticalSpeed)) {
+            return Math.min(solvedPitch, LANDING_FLARE_PITCH);
+        }
+        if (heightAboveSurface > 40.0D) {
+            return Math.max(solvedPitch, 20.0F);
+        }
+        if (heightAboveSurface > 20.0D) {
+            return Math.max(solvedPitch, 8.0F);
+        }
+        if (heightAboveSurface > 14.0D) {
+            return Math.max(solvedPitch, 0.0F);
+        }
+        if (heightAboveSurface > 7.0D) {
+            return Math.min(solvedPitch, -18.0F);
+        }
+        if (heightAboveSurface <= 7.0D) {
+            return Math.min(solvedPitch, LANDING_FLARE_PITCH);
+        }
+        return solvedPitch;
+    }
+
+    static boolean shouldWaitForChunks(double loadedHorizon, double horizontalSpeed, double profileHorizon) {
+        final double brakingHorizon = 24.0D + horizontalSpeed * 40.0D;
+        return Double.isFinite(loadedHorizon) && loadedHorizon < Math.max(profileHorizon, brakingHorizon);
+    }
+
+    private void holdForChunkLoading() {
+        final float yaw = ctx.playerRotations().getYaw() + 20.0F;
+        final float pitch = ctx.player().getDeltaMovement().y < -0.45D ? -35.0F : -20.0F;
+        baritone.getLookBehavior().updateTarget(new Rotation(yaw, pitch), false);
+        if (ctx.player().getDeltaMovement().y < -0.65D && this.chunkWaitRocketCooldown <= 0) {
+            final Vec3 start = ctx.player().position();
+            final Vec3 look = RotationUtils.calcLookDirectionFromRotation(new Rotation(yaw, pitch));
+            this.tickUseFireworks(start, start.add(look.scale(20.0D)), false, true);
+            this.chunkWaitRocketCooldown = 80;
+        }
+    }
+
+    private boolean isCorridorShortcutValid(BetterBlockPos from, BetterBlockPos to) {
+        final double dx = (double) to.x - from.x;
+        final double dy = (double) to.y - from.y;
+        final double dz = (double) to.z - from.z;
+        final double horizontal = Math.sqrt(dx * dx + dz * dz);
+        final double distance = Math.sqrt(horizontal * horizontal + dy * dy);
+        if (distance > 96.0D || Math.abs(dy) > Math.max(24.0D, horizontal * 1.25D)) {
+            return false;
+        }
+
+        final double margin = Math.max(0.0D, Baritone.settings().elytraMinimumAvoidance.value);
+        final double radius = 0.3D + margin;
+        final double minY = -margin;
+        final double maxY = 0.6D + margin;
+        final double[] src = new double[]{
+                from.x - radius, from.y + minY, from.z - radius,
+                from.x - radius, from.y + minY, from.z + radius,
+                from.x - radius, from.y + maxY, from.z - radius,
+                from.x - radius, from.y + maxY, from.z + radius,
+                from.x + radius, from.y + minY, from.z - radius,
+                from.x + radius, from.y + minY, from.z + radius,
+                from.x + radius, from.y + maxY, from.z - radius,
+                from.x + radius, from.y + maxY, from.z + radius,
+        };
+        final double[] dst = new double[]{
+                to.x - radius, to.y + minY, to.z - radius,
+                to.x - radius, to.y + minY, to.z + radius,
+                to.x - radius, to.y + maxY, to.z - radius,
+                to.x - radius, to.y + maxY, to.z + radius,
+                to.x + radius, to.y + minY, to.z - radius,
+                to.x + radius, to.y + minY, to.z + radius,
+                to.x + radius, to.y + maxY, to.z - radius,
+                to.x + radius, to.y + maxY, to.z + radius,
+        };
         return this.context.raytrace(8, src, dst, NetherPathfinderContext.Visibility.ALL);
     }
 
@@ -1076,7 +1384,10 @@ public final class ElytraBehavior implements Helper {
         }
 
         // Standard test, assume (not) boosted for entire duration
-        final int ticks = desperate ? 3 : context.boost.isBoosted() ? Math.max(5, context.boost.getGuaranteedBoostTicks()) : Baritone.settings().elytraSimulationTicks.value;
+        final int ticks = desperate ? 3 : context.boost.isBoosted()
+                ? Math.max(5, context.boost.getGuaranteedBoostTicks())
+                : ElytraFlightProfile.fromSetting(Baritone.settings().elytraFlightProfile.value)
+                .simulationTicks(Baritone.settings().elytraSimulationTicks.value);
         tests.add(new IntTriple(ticks, context.boost.isBoosted() ? ticks : 0, 0));
 
         final Optional<PitchResult> result = tests.stream()

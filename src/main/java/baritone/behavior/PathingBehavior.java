@@ -30,6 +30,7 @@ import baritone.api.utils.PathCalculationResult;
 import baritone.api.utils.interfaces.IGoalRenderPos;
 import baritone.pathing.calc.AStarPathFinder;
 import baritone.pathing.calc.AbstractNodeCostSearch;
+import baritone.pathing.calc.HierarchicalPathPlanner;
 import baritone.pathing.movement.CalculationContext;
 import baritone.pathing.movement.MovementHelper;
 import baritone.pathing.path.PathExecutor;
@@ -45,6 +46,7 @@ import java.util.Comparator;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class PathingBehavior extends Behavior implements IPathingBehavior, Helper {
 
@@ -67,6 +69,8 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
 
     private volatile AbstractNodeCostSearch inProgress;
     private final Object pathCalcLock = new Object();
+    private final AtomicLong pathCalculationGeneration = new AtomicLong();
+    private final HierarchicalPathPlanner hierarchicalPlanner = new HierarchicalPathPlanner();
 
     private final Object pathPlanLock = new Object();
 
@@ -145,7 +149,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
                             && (!currentBest.isPresent() || (!currentBest.get().positions().contains(ctx.playerFeet()) && !currentBest.get().positions().contains(expectedSegmentStart))) // if
                     ) {
                         // when it was *just* started, currentBest will be empty so we need to also check calcFrom since that's always present
-                        inProgress.cancel(); // cancellation doesn't dispatch any events
+                        invalidateInProgressLocked(); // cancellation doesn't dispatch any events
                     }
                 }
             }
@@ -347,7 +351,9 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
 
     public void softCancelIfSafe() {
         synchronized (pathPlanLock) {
-            getInProgress().ifPresent(AbstractNodeCostSearch::cancel); // only cancel ours
+            synchronized (pathCalcLock) {
+                invalidateInProgressLocked(); // only cancel ours
+            }
             if (!isSafeToCancel()) {
                 return;
             }
@@ -362,7 +368,9 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
     public void secretInternalSegmentCancel() {
         queuePathEvent(PathEvent.CANCELED);
         synchronized (pathPlanLock) {
-            getInProgress().ifPresent(AbstractNodeCostSearch::cancel);
+            synchronized (pathCalcLock) {
+                invalidateInProgressLocked();
+            }
             if (current != null) {
                 current = null;
                 next = null;
@@ -376,8 +384,32 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
     public void forceCancel() { // exposed on public api because :sob:
         cancelEverything();
         secretInternalSegmentCancel();
-        synchronized (pathCalcLock) {
+    }
+
+    @Override
+    public void onBlockChange(BlockChangeEvent event) {
+        hierarchicalPlanner.invalidateBlock(event.getChunkPos().x() << 4, event.getChunkPos().z() << 4);
+    }
+
+    @Override
+    public void onChunkEvent(ChunkEvent event) {
+        hierarchicalPlanner.invalidateBlock(event.getX() << 4, event.getZ() << 4);
+    }
+
+    /**
+     * Cancels and detaches the active calculation while holding {@link #pathCalcLock}.
+     * Detaching is important: a calculation can observe cancellation only after it has
+     * already produced a result, so cancellation alone cannot prevent stale installation.
+     */
+    private void invalidateInProgressLocked() {
+        if (!Thread.holdsLock(pathCalcLock)) {
+            throw new IllegalStateException("Must hold pathCalcLock while invalidating a path calculation");
+        }
+        AbstractNodeCostSearch pathfinder = inProgress;
+        if (pathfinder != null) {
+            pathCalculationGeneration.incrementAndGet();
             inProgress = null;
+            pathfinder.cancel();
         }
     }
 
@@ -502,6 +534,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
             logDebug("Simplifying " + goal.getClass() + " to GoalXZ due to distance");
         }
         inProgress = pathfinder;
+        final long calculationGeneration = pathCalculationGeneration.incrementAndGet();
         Baritone.getExecutor().execute(() -> {
             if (talkAboutIt) {
                 logDebug("Starting to search for path from " + start + " to " + goal);
@@ -509,6 +542,10 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
 
             PathCalculationResult calcResult = pathfinder.calculate(primaryTimeout, failureTimeout);
             synchronized (pathPlanLock) {
+                if (calculationGeneration != pathCalculationGeneration.get() || inProgress != pathfinder) {
+                    logDebug("Discarding result from superseded path calculation generation " + calculationGeneration);
+                    return;
+                }
                 Optional<PathExecutor> executor = calcResult.getPath().map(p -> new PathExecutor(PathingBehavior.this, p));
                 if (current == null) {
                     if (executor.isPresent()) {
@@ -551,7 +588,9 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
                     }
                 }
                 synchronized (pathCalcLock) {
-                    inProgress = null;
+                    if (calculationGeneration == pathCalculationGeneration.get() && inProgress == pathfinder) {
+                        inProgress = null;
+                    }
                 }
             }
         });
@@ -565,13 +604,25 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
                 transformed = new GoalXZ(pos.getX(), pos.getZ());
             }
         }
-        Favoring favoring = new Favoring(context.getBaritone().getPlayerContext(), previous, context);
         BetterBlockPos feet = ctx.playerFeet();
         var realStart = new BetterBlockPos(start);
         var sub = feet.subtract(realStart);
         if (feet.getY() == realStart.getY() && Math.abs(sub.getX()) <= 1 && Math.abs(sub.getZ()) <= 1) {
             realStart = feet;
         }
+        HierarchicalPathPlanner.Corridor corridor = HierarchicalPathPlanner.Corridor.NONE;
+        if (transformed instanceof IGoalRenderPos renderGoal) {
+            BlockPos target = renderGoal.getGoalPos();
+            corridor = hierarchicalPlanner.plan(start.getX(), start.getZ(), target.getX(), target.getZ(),
+                    context::isLoaded);
+            HierarchicalPathPlanner.Metrics metrics = hierarchicalPlanner.lastMetrics();
+            if (corridor.isPresent()) {
+                logDebug("Hierarchical corridor: " + metrics.corridorLength() + " regions, "
+                        + metrics.abstractExpansions() + " abstract expansions, repaired="
+                        + metrics.repairedExistingSearch());
+            }
+        }
+        Favoring favoring = new Favoring(context.getBaritone().getPlayerContext(), previous, context, corridor);
         return new AStarPathFinder(realStart, start.getX(), start.getY(), start.getZ(), transformed, favoring, context);
 
     }

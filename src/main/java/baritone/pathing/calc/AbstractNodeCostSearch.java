@@ -58,7 +58,9 @@ public abstract class AbstractNodeCostSearch implements IPathFinder, Helper {
 
     private volatile boolean isFinished;
 
-    protected boolean cancelRequested;
+    protected volatile boolean cancelRequested;
+
+    private volatile PathSearchMetrics metrics = PathSearchMetrics.notStarted();
 
     /**
      * This is really complicated and hard to explain. I wrote a comment in the old version of MineBot but it was so
@@ -83,13 +85,20 @@ public abstract class AbstractNodeCostSearch implements IPathFinder, Helper {
     protected static final double MIN_IMPROVEMENT = 0.01;
 
     AbstractNodeCostSearch(BetterBlockPos realStart, int startX, int startY, int startZ, Goal goal, CalculationContext context) {
+        this(realStart, startX, startY, startZ, goal, context,
+                Baritone.settings().pathingMapDefaultSize.value,
+                Baritone.settings().pathingMapLoadFactor.value);
+    }
+
+    AbstractNodeCostSearch(BetterBlockPos realStart, int startX, int startY, int startZ, Goal goal, CalculationContext context,
+                           int mapDefaultSize, float mapLoadFactor) {
         this.realStart = realStart;
         this.startX = startX;
         this.startY = startY;
         this.startZ = startZ;
         this.goal = goal;
         this.context = context;
-        this.map = new Long2ObjectOpenHashMap<>(Baritone.settings().pathingMapDefaultSize.value, Baritone.settings().pathingMapLoadFactor.value);
+        this.map = new Long2ObjectOpenHashMap<>(mapDefaultSize, mapLoadFactor);
     }
 
     public void cancel() {
@@ -149,30 +158,34 @@ public abstract class AbstractNodeCostSearch implements IPathFinder, Helper {
      * @return The distance, squared
      */
     protected double getDistFromStartSq(PathNode n) {
-        int xDiff = n.x - startX;
-        int yDiff = n.y - startY;
-        int zDiff = n.z - startZ;
+        return distanceSquared(n.x, n.y, n.z, startX, startY, startZ);
+    }
+
+    static double distanceSquared(int x, int y, int z, int originX, int originY, int originZ) {
+        double xDiff = (double) x - originX;
+        double yDiff = (double) y - originY;
+        double zDiff = (double) z - originZ;
         return xDiff * xDiff + yDiff * yDiff + zDiff * zDiff;
     }
 
     /**
-     * Attempts to search the block position hashCode long to {@link PathNode} map
+     * Attempts to search the serialized block position key to {@link PathNode} map
      * for the node mapped to the specified pos. If no node is found,
      * a new node is created.
      *
-     * @param x        The x position of the node
-     * @param y        The y position of the node
-     * @param z        The z position of the node
-     * @param hashCode The hash code of the node, provided by {@link BetterBlockPos#longHash(int, int, int)}
+     * @param x           The x position of the node
+     * @param y           The y position of the node
+     * @param z           The z position of the node
+     * @param positionKey The serialized position key, provided by {@link BetterBlockPos#serializeToLong(int, int, int)}
      * @return The associated node
      * @see <a href="https://github.com/cabaletta/baritone/issues/107">Issue #107</a>
      */
 
-    protected PathNode getNodeAtPosition(int x, int y, int z, long hashCode) {
-        PathNode node = map.get(hashCode);
+    protected PathNode getNodeAtPosition(int x, int y, int z, long positionKey) {
+        PathNode node = map.get(positionKey);
         if (node == null) {
             node = new PathNode(x, y, z, goal);
-            map.put(hashCode, node);
+            map.put(positionKey, node);
         }
         return node;
     }
@@ -237,7 +250,23 @@ public abstract class AbstractNodeCostSearch implements IPathFinder, Helper {
         return new BetterBlockPos(startX, startY, startZ);
     }
 
+    public final PathSearchMetrics getMetrics() {
+        return metrics;
+    }
+
+    protected final void setMetrics(PathSearchMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     protected int mapSize() {
         return map.size();
+    }
+
+    protected double costAt(BetterBlockPos position) {
+        if (!BetterBlockPos.isValidForLongSerialization(position.x, position.y, position.z)) {
+            return Double.POSITIVE_INFINITY;
+        }
+        PathNode node = map.get(BetterBlockPos.serializeToLong(position.x, position.y, position.z));
+        return node == null ? Double.POSITIVE_INFINITY : node.cost;
     }
 }

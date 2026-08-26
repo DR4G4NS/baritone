@@ -31,6 +31,7 @@ import baritone.utils.pathing.Favoring;
 import baritone.utils.pathing.MutableMoveResult;
 
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 /**
  * The actual A* pathfinding
@@ -52,7 +53,14 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
     protected Optional<IPath> calculate0(long primaryTimeout, long failureTimeout) {
         int minY = calcContext.world.dimensionType().minY();
         int height = calcContext.world.dimensionType().height();
-        startNode = getNodeAtPosition(startX, startY, startZ, BetterBlockPos.longHash(startX, startY, startZ));
+        long maxYExclusive = (long) minY + height;
+        if (height <= 0 || !isYInBounds(startY, minY, maxYExclusive)
+                || !BetterBlockPos.isValidForLongSerialization(startX, startY, startZ)) {
+            setMetrics(PathSearchMetrics.create(PathSearchMetrics.Outcome.INVALID_START, 0L,
+                    0, 0, 0, 0, 0, Double.POSITIVE_INFINITY));
+            return Optional.empty();
+        }
+        startNode = getNodeAtPosition(startX, startY, startZ, BetterBlockPos.serializeToLong(startX, startY, startZ));
         startNode.cost = 0;
         startNode.combinedCost = startNode.estimatedCostToGoal;
         BinaryHeapOpenSet openSet = new BinaryHeapOpenSet();
@@ -64,16 +72,18 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
         }
         MutableMoveResult res = new MutableMoveResult();
         BetterWorldBorder worldBorder = new BetterWorldBorder(calcContext.world.getWorldBorder());
-        long startTime = System.currentTimeMillis();
+        long startTime = System.nanoTime();
         boolean slowPath = Baritone.settings().slowPath.value;
         if (slowPath) {
             logDebug("slowPath is on, path timeout will be " + Baritone.settings().slowPathTimeoutMS.value + "ms instead of " + primaryTimeout + "ms");
         }
-        long primaryTimeoutTime = startTime + (slowPath ? Baritone.settings().slowPathTimeoutMS.value : primaryTimeout);
-        long failureTimeoutTime = startTime + (slowPath ? Baritone.settings().slowPathTimeoutMS.value : failureTimeout);
+        long primaryTimeoutNanos = timeoutToNanos(slowPath ? Baritone.settings().slowPathTimeoutMS.value : primaryTimeout);
+        long failureTimeoutNanos = timeoutToNanos(slowPath ? Baritone.settings().slowPathTimeoutMS.value : failureTimeout);
         boolean failing = true;
         int numNodes = 0;
         int numMovementsConsidered = 0;
+        int numReopened = 0;
+        int peakOpenSetSize = openSet.size();
         int numEmptyChunk = 0;
         boolean isFavoring = !favoring.isEmpty();
         int timeCheckInterval = 1 << 6;
@@ -82,8 +92,8 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
         Moves[] allMoves = Moves.values();
         while (!openSet.isEmpty() && numEmptyChunk < pathingMaxChunkBorderFetch && !cancelRequested) {
             if ((numNodes & (timeCheckInterval - 1)) == 0) { // only call this once every 64 nodes (about half a millisecond)
-                long now = System.currentTimeMillis(); // since nanoTime is slow on windows (takes many microseconds)
-                if (now - failureTimeoutTime >= 0 || (!failing && now - primaryTimeoutTime >= 0)) {
+                long elapsedNanos = System.nanoTime() - startTime;
+                if (elapsedNanos >= failureTimeoutNanos || (!failing && elapsedNanos >= primaryTimeoutNanos)) {
                     break;
                 }
             }
@@ -96,23 +106,26 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
             mostRecentConsidered = currentNode;
             numNodes++;
             if (goal.isInGoal(currentNode.x, currentNode.y, currentNode.z)) {
-                logDebug("Took " + (System.currentTimeMillis() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
+                long elapsedNanos = System.nanoTime() - startTime;
+                setMetrics(PathSearchMetrics.create(PathSearchMetrics.Outcome.SUCCESS, elapsedNanos,
+                        numNodes, numMovementsConsidered, numReopened, mapSize(), peakOpenSetSize, currentNode.cost));
+                logDebug("Took " + TimeUnit.NANOSECONDS.toMillis(elapsedNanos) + "ms, " + numMovementsConsidered + " movements considered");
                 return Optional.of(new Path(realStart, startNode, currentNode, numNodes, goal, calcContext));
             }
             for (Moves moves : allMoves) {
                 int newX = currentNode.x + moves.xOffset;
                 int newZ = currentNode.z + moves.zOffset;
-                if ((newX >> 4 != currentNode.x >> 4 || newZ >> 4 != currentNode.z >> 4) && !calcContext.isLoaded(newX, newZ)) {
+                if (!moves.dynamicXZ
+                        && isDifferentChunk(currentNode.x, currentNode.z, newX, newZ)
+                        && !calcContext.isLoaded(newX, newZ)) {
                     // only need to check if the destination is a loaded chunk if it's in a different chunk than the start of the movement
-                    if (!moves.dynamicXZ) { // only increment the counter if the movement would have gone out of bounds guaranteed
-                        numEmptyChunk++;
-                    }
+                    numEmptyChunk++;
                     continue;
                 }
                 if (!moves.dynamicXZ && !worldBorder.entirelyContains(newX, newZ)) {
                     continue;
                 }
-                if (currentNode.y + moves.yOffset > height || currentNode.y + moves.yOffset < minY) {
+                if (!moves.dynamicY && !isYInBounds((long) currentNode.y + moves.yOffset, minY, maxYExclusive)) {
                     continue;
                 }
                 res.reset();
@@ -132,7 +145,15 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                             actionCost));
                 }
                 // check destination after verifying it's not COST_INF -- some movements return COST_INF without adjusting the destination
+                if (!isYInBounds(res.y, minY, maxYExclusive)) {
+                    continue;
+                }
                 if (moves.dynamicXZ && !worldBorder.entirelyContains(res.x, res.z)) { // see issue #218
+                    continue;
+                }
+                if (moves.dynamicXZ
+                        && isDifferentChunk(currentNode.x, currentNode.z, res.x, res.z)
+                        && !calcContext.isLoaded(res.x, res.z)) {
                     continue;
                 }
                 if (!moves.dynamicXZ && (res.x != newX || res.z != newZ)) {
@@ -157,14 +178,20 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                             SettingsUtil.maybeCensor(res.y),
                             SettingsUtil.maybeCensor(currentNode.y + moves.yOffset)));
                 }
-                long hashCode = BetterBlockPos.longHash(res.x, res.y, res.z);
+                if (!BetterBlockPos.isValidForLongSerialization(res.x, res.y, res.z)) {
+                    continue;
+                }
+                long positionKey = BetterBlockPos.serializeToLong(res.x, res.y, res.z);
                 if (isFavoring) {
                     // see issue #18
-                    actionCost *= favoring.calculate(hashCode);
+                    actionCost *= favoring.calculate(positionKey);
                 }
-                PathNode neighbor = getNodeAtPosition(res.x, res.y, res.z, hashCode);
+                PathNode neighbor = getNodeAtPosition(res.x, res.y, res.z, positionKey);
                 double tentativeCost = currentNode.cost + actionCost;
                 if (neighbor.cost - tentativeCost > minimumImprovement) {
+                    if (neighbor.cost < ActionCosts.COST_INF && !neighbor.isOpen()) {
+                        numReopened++;
+                    }
                     neighbor.previous = currentNode;
                     neighbor.cost = tentativeCost;
                     neighbor.combinedCost = tentativeCost + neighbor.estimatedCostToGoal;
@@ -172,6 +199,7 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                         openSet.update(neighbor);
                     } else {
                         openSet.insert(neighbor);//dont double count, dont insert into open set if it's already there
+                        peakOpenSetSize = Math.max(peakOpenSetSize, openSet.size());
                     }
                     for (int i = 0; i < COEFFICIENTS.length; i++) {
                         double heuristic = neighbor.estimatedCostToGoal + neighbor.cost / COEFFICIENTS[i];
@@ -187,16 +215,42 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
             }
         }
         if (cancelRequested) {
+            long elapsedNanos = System.nanoTime() - startTime;
+            setMetrics(PathSearchMetrics.create(PathSearchMetrics.Outcome.CANCELLED, elapsedNanos,
+                    numNodes, numMovementsConsidered, numReopened, mapSize(), peakOpenSetSize, Double.POSITIVE_INFINITY));
             return Optional.empty();
         }
         System.out.println(numMovementsConsidered + " movements considered");
         System.out.println("Open set size: " + openSet.size());
         System.out.println("PathNode map size: " + mapSize());
-        System.out.println((int) (numNodes * 1.0 / ((System.currentTimeMillis() - startTime) / 1000F)) + " nodes per second");
+        long elapsedNanos = System.nanoTime() - startTime;
+        long nodesPerSecond = elapsedNanos <= 0 ? 0 : Math.round(numNodes * 1_000_000_000.0D / elapsedNanos);
+        System.out.println(nodesPerSecond + " nodes per second");
         Optional<IPath> result = bestSoFar(true, numNodes);
+        PathSearchMetrics.Outcome outcome = result.isPresent()
+                ? PathSearchMetrics.Outcome.PARTIAL
+                : PathSearchMetrics.Outcome.FAILURE;
+        double finalCost = result.map(path -> costAt(path.getDest())).orElse(Double.POSITIVE_INFINITY);
+        setMetrics(PathSearchMetrics.create(outcome, elapsedNanos, numNodes, numMovementsConsidered,
+                numReopened, mapSize(), peakOpenSetSize, finalCost));
         if (result.isPresent()) {
-            logDebug("Took " + (System.currentTimeMillis() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
+            logDebug("Took " + TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
         }
         return result;
+    }
+
+    static boolean isYInBounds(long y, int minY, long maxYExclusive) {
+        return y >= minY && y < maxYExclusive;
+    }
+
+    static boolean isDifferentChunk(int startX, int startZ, int endX, int endZ) {
+        return startX >> 4 != endX >> 4 || startZ >> 4 != endZ >> 4;
+    }
+
+    static long timeoutToNanos(long timeoutMillis) {
+        if (timeoutMillis < 0) {
+            throw new IllegalArgumentException("Pathing timeout must not be negative: " + timeoutMillis + "ms");
+        }
+        return Math.min(TimeUnit.MILLISECONDS.toNanos(timeoutMillis), Long.MAX_VALUE >>> 1);
     }
 }

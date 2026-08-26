@@ -26,6 +26,7 @@ import baritone.api.event.events.ChunkEvent;
 import baritone.api.event.events.type.EventState;
 import baritone.api.utils.Pair;
 import baritone.cache.CachedChunk;
+import baritone.process.elytra.ElytraSeedDiscovery;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
 import net.minecraft.client.multiplayer.ClientPacketListener;
@@ -94,6 +95,14 @@ public abstract class MixinClientPlayNetHandler extends ClientCommonPacketListen
         if (event.isCancelled()) {
             ci.cancel();
         }
+    }
+
+    @Inject(
+            method = "handleSystemChat",
+            at = @At("HEAD")
+    )
+    private void observeSeedResponse(ClientboundSystemChatPacket packet, CallbackInfo ci) {
+        ElytraSeedDiscovery.observeServerMessage(packet.content());
     }
 
     @Inject(

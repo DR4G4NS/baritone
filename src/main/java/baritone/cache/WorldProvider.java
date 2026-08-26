@@ -92,7 +92,11 @@ public class WorldProvider implements IWorldProvider {
 
             System.out.println("Baritone world data dir: " + worldDataDir);
             synchronized (worldCache) {
-                this.currentWorld = worldCache.computeIfAbsent(worldDataDir, d -> new WorldData(d, world.dimensionType(), world.dimension()));
+                WorldData data = worldCache.computeIfAbsent(worldDataDir, d -> new WorldData(d, world.dimensionType(), world.dimension()));
+                if (this.currentWorld != data) {
+                    data.retain();
+                    this.currentWorld = data;
+                }
             }
             this.mcWorld = ctx.world();
         });
@@ -105,7 +109,16 @@ public class WorldProvider implements IWorldProvider {
         if (world == null) {
             return;
         }
-        world.onClose();
+        boolean lastUser;
+        synchronized (worldCache) {
+            lastUser = world.release();
+            if (lastUser) {
+                worldCache.remove(world.directory, world);
+            }
+        }
+        if (lastUser) {
+            world.onClose();
+        }
     }
 
     private Path getWorldDataDirectory(Path parent, Level world) {

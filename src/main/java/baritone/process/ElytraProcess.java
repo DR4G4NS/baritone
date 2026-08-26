@@ -46,14 +46,13 @@ import baritone.utils.PathingCommandContext;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.NonNullList;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.AirBlock;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
@@ -63,6 +62,9 @@ import java.util.*;
 import static baritone.api.pathing.movement.ActionCosts.COST_INF;
 
 public class ElytraProcess extends BaritoneProcessHelper implements IBaritoneProcess, IElytraProcess, AbstractGameEventListener {
+    static final double LANDING_APPROACH_DISTANCE = 16.0;
+    static final double LANDING_CAPTURE_HORIZONTAL_DISTANCE = 4.0;
+    static final double LANDING_CAPTURE_VERTICAL_DISTANCE = 6.0;
     public State state;
     private boolean goingToLandingSpot;
     private BetterBlockPos landingSpot;
@@ -70,6 +72,12 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
     private Goal goal;
     private ElytraBehavior behavior;
     private boolean predictingTerrain;
+    private boolean verticalRecenterRequested;
+    private boolean environmentalEmergencyAnnounced;
+    private boolean resourceSafetyWarningAnnounced;
+    private boolean landingMovementAnnounced;
+    private boolean landingSearchFailureAnnounced;
+    private int landingSearchCooldown;
 
     @Override
     public void onLostControl() {
@@ -78,6 +86,12 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         this.landingSpot = null;
         this.reachedGoal = false;
         this.goal = null;
+        this.verticalRecenterRequested = false;
+        this.environmentalEmergencyAnnounced = false;
+        this.resourceSafetyWarningAnnounced = false;
+        this.landingMovementAnnounced = false;
+        this.landingSearchFailureAnnounced = false;
+        this.landingSearchCooldown = 0;
         destroyBehaviorAsync();
     }
 
@@ -111,6 +125,15 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
 
     @Override
     public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+        if (!ctx.player().isAlive()) {
+            this.onLostControl();
+            return new PathingCommand(null, PathingCommandType.CANCEL_AND_SET_GOAL);
+        }
+        if (this.verticalRecenterRequested) {
+            this.verticalRecenterRequested = false;
+            this.resetState();
+            return new PathingCommand(null, PathingCommandType.CANCEL_AND_SET_GOAL);
+        }
         final long seedSetting = Baritone.settings().elytraNetherSeed.value;
         if (seedSetting != this.behavior.context.getSeed()) {
             logDirect("Nether seed changed, recalculating path");
@@ -123,6 +146,9 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         }
 
         this.behavior.onTick();
+        if (this.landingSearchCooldown > 0) {
+            this.landingSearchCooldown--;
+        }
 
         if (calcFailed) {
             onLostControl();
@@ -131,28 +157,62 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         }
 
         boolean safetyLanding = false;
-        if (ctx.player().isFallFlying() && shouldLandForSafety()) {
+        final boolean environmentalEmergency = ctx.player().isInLava() || ctx.player().isOnFire();
+        if (ctx.player().isFallFlying() && environmentalEmergency && this.state != State.LANDING) {
+            if (!this.environmentalEmergencyAnnounced) {
+                logDirect("Emergency landing - lava or fire detected");
+                this.environmentalEmergencyAnnounced = true;
+            }
+            safetyLanding = true;
+        } else if (!environmentalEmergency) {
+            this.environmentalEmergencyAnnounced = false;
+        }
+        final boolean resourceSafetyLanding = ctx.player().isFallFlying() && shouldLandForSafety();
+        if (resourceSafetyLanding) {
             if (Baritone.settings().elytraAllowEmergencyLand.value) {
-                logDirect("Emergency landing - almost out of elytra durability or fireworks");
+                if (!this.resourceSafetyWarningAnnounced) {
+                    logDirect("Emergency landing - almost out of elytra durability or fireworks");
+                }
                 safetyLanding = true;
             } else {
-                logDirect("almost out of elytra durability or fireworks, but I'm going to continue since elytraAllowEmergencyLand is false");
+                if (!this.resourceSafetyWarningAnnounced) {
+                    logDirect("almost out of elytra durability or fireworks, but I'm going to continue since elytraAllowEmergencyLand is false");
+                }
             }
+            this.resourceSafetyWarningAnnounced = true;
+        } else {
+            this.resourceSafetyWarningAnnounced = false;
         }
         if (ctx.player().isFallFlying() && this.state != State.LANDING && (this.behavior.pathManager.isComplete() || safetyLanding)) {
             final BetterBlockPos last = this.behavior.pathManager.path.getLast();
-            if (last != null && (ctx.player().position().distanceToSqr(last.getCenter()) < (48 * 48) || safetyLanding) && (!goingToLandingSpot || (safetyLanding && this.landingSpot == null))) {
+            if (last != null
+                    && this.landingSearchCooldown == 0
+                    && shouldBeginLandingApproach(ctx.player().position().distanceToSqr(last.getCenter()), safetyLanding)
+                    && (!goingToLandingSpot || (safetyLanding && this.landingSpot == null))) {
                 logDirect("Path complete, picking a nearby safe landing spot...");
-                BetterBlockPos landingSpot = findSafeLandingSpot(ctx.playerFeet());
+                BetterBlockPos landingSearchOrigin = safetyLanding
+                        ? ctx.playerFeet()
+                        : new BetterBlockPos(last.x, ctx.playerFeet().y, last.z);
+                BetterBlockPos landingSpot = findSafeLandingSpot(landingSearchOrigin);
                 // if this fails we will just keep orbiting the last node until we run out of rockets or the user intervenes
                 if (landingSpot != null) {
                     this.pathTo0(landingSpot, true);
                     this.landingSpot = landingSpot;
+                    this.goingToLandingSpot = true;
+                    this.landingSearchFailureAnnounced = false;
+                } else {
+                    if (!this.landingSearchFailureAnnounced) {
+                        logDirect("No loaded safe landing surface found yet; continuing flight and retrying...");
+                        this.landingSearchFailureAnnounced = true;
+                    }
+                    this.landingSearchCooldown = 40;
                 }
-                this.goingToLandingSpot = true;
             }
 
-            if (last != null && ctx.player().position().distanceToSqr(last.getCenter()) < 1) {
+            final boolean reachedLast = last != null && (this.goingToLandingSpot
+                    ? isInsideLandingCapture(ctx.player().position(), last.getCenter())
+                    : ctx.player().position().distanceToSqr(last.getCenter()) < 1);
+            if (reachedLast) {
                 if (Baritone.settings().notificationOnPathComplete.value && !reachedGoal) {
                     logNotification("Pathing complete", false);
                 }
@@ -190,14 +250,22 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         }
 
         if (ctx.player().isFallFlying()) {
-            behavior.landingMode = this.state == State.LANDING;
+            behavior.landingMode = this.goingToLandingSpot || this.state == State.LANDING;
             this.goal = null;
             baritone.getInputOverrideHandler().clearAllKeys();
             behavior.tick();
             return new PathingCommand(null, PathingCommandType.CANCEL_AND_SET_GOAL);
         } else if (this.state == State.LANDING) {
-            if (ctx.playerMotion().multiply(1, 0, 1).length() > 0.001) {
-                logDirect("Landed, but still moving, waiting for velocity to die down... ");
+            if (!ctx.player().onGround()) {
+                baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
+                return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
+            }
+            baritone.getInputOverrideHandler().clearAllKeys();
+            if (ctx.playerMotion().multiply(1, 0, 1).length() > 0.05D) {
+                if (!this.landingMovementAnnounced) {
+                    logDirect("Landed, braking...");
+                    this.landingMovementAnnounced = true;
+                }
                 baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
                 return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
             }
@@ -328,16 +396,20 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
     }
 
     private void pathTo0(BlockPos destination, boolean appendDestination) {
-        if (ctx.player() == null || ctx.player().level().dimension() != Level.NETHER) {
+        if (ctx.player() == null || ctx.world() == null) {
             return;
         }
         this.onLostControl();
         this.predictingTerrain = Baritone.settings().elytraPredictTerrain.value;
         this.behavior = new ElytraBehavior(this.baritone, this, destination, appendDestination);
-        if (ctx.world() != null) {
+        if (ctx.world() != null && !appendDestination) {
             this.behavior.repackChunks();
         }
-        this.behavior.pathTo();
+        if (appendDestination) {
+            this.behavior.pathToLanding();
+        } else {
+            this.behavior.pathTo();
+        }
     }
 
     @Override
@@ -358,8 +430,11 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         } else {
             throw new IllegalArgumentException("The goal must be a GoalXZ or GoalBlock");
         }
-        if (y <= 0 || y >= 128) {
-            throw new IllegalArgumentException("The y of the goal is not between 0 and 128");
+        final int minY = ctx.world().getMinY();
+        final int maxY = minY + ctx.world().getHeight();
+        if (y < minY || y >= maxY) {
+            throw new IllegalArgumentException("The y of the goal is outside this dimension's build height ["
+                    + minY + ", " + maxY + ")");
         }
         this.pathTo(new BlockPos(x, y, z));
     }
@@ -382,6 +457,21 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
             return true;
         }
         return false;
+    }
+
+    static boolean shouldBeginLandingApproach(double distanceSquared, boolean safetyLanding) {
+        return safetyLanding || distanceSquared < LANDING_APPROACH_DISTANCE * LANDING_APPROACH_DISTANCE;
+    }
+
+    static boolean isInsideLandingCapture(Vec3 playerPosition, Vec3 landingColumnTop) {
+        final double dx = playerPosition.x - landingColumnTop.x;
+        final double dz = playerPosition.z - landingColumnTop.z;
+        return dx * dx + dz * dz < LANDING_CAPTURE_HORIZONTAL_DISTANCE * LANDING_CAPTURE_HORIZONTAL_DISTANCE
+                && Math.abs(playerPosition.y - landingColumnTop.y) < LANDING_CAPTURE_VERTICAL_DISTANCE;
+    }
+
+    public void requestVerticalRecenter() {
+        this.verticalRecenterRequested = true;
     }
 
     @Override
@@ -471,16 +561,17 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         }
     }
 
-    private static boolean isInBounds(BlockPos pos) {
-        return pos.getY() >= 0 && pos.getY() < 128;
-    }
-
-    private boolean isSafeBlock(Block block) {
-        return block == Blocks.NETHERRACK || block == Blocks.GRAVEL || (block == Blocks.NETHER_BRICKS && Baritone.settings().elytraAllowLandOnNetherFortress.value);
+    private boolean isInBounds(BlockPos pos) {
+        return pos.getY() >= ctx.world().getMinY()
+                && pos.getY() < ctx.world().getMinY() + ctx.world().getHeight();
     }
 
     private boolean isSafeBlock(BlockPos pos) {
-        return isSafeBlock(ctx.world().getBlockState(pos).getBlock());
+        final BlockState state = ctx.world().getBlockState(pos);
+        if (state.getBlock() == Blocks.NETHER_BRICKS && !Baritone.settings().elytraAllowLandOnNetherFortress.value) {
+            return false;
+        }
+        return state.getFluidState().isEmpty() && state.isFaceSturdy(ctx.world(), pos, Direction.UP);
     }
 
     private boolean isAtEdge(BlockPos pos) {
@@ -526,19 +617,19 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
 
     private BetterBlockPos checkLandingSpot(BlockPos pos, LongOpenHashSet checkedSpots) {
         BlockPos.MutableBlockPos mut = new BlockPos.MutableBlockPos(pos.getX(), pos.getY(), pos.getZ());
-        while (mut.getY() >= 0) {
+        while (mut.getY() >= ctx.world().getMinY()) {
             if (checkedSpots.contains(mut.asLong())) {
                 return null;
             }
             checkedSpots.add(mut.asLong());
-            Block block = ctx.world().getBlockState(mut).getBlock();
+            BlockState state = ctx.world().getBlockState(mut);
 
-            if (isSafeBlock(block)) {
+            if (isSafeBlock(mut)) {
                 if (!isAtEdge(mut)) {
                     return new BetterBlockPos(mut);
                 }
                 return null;
-            } else if (block != Blocks.AIR) {
+            } else if (!state.isAir()) {
                 return null;
             }
             mut.set(mut.getX(), mut.getY() - 1, mut.getZ());
@@ -546,30 +637,61 @@ public class ElytraProcess extends BaritoneProcessHelper implements IBaritonePro
         return null; // void
     }
 
-    private static final int LANDING_COLUMN_HEIGHT = 15;
+    public static final int LANDING_COLUMN_HEIGHT = 24;
+    private static final int LANDING_SEARCH_HORIZONTAL_RADIUS = 64;
+    private static final int LANDING_SEARCH_VERTICAL_RADIUS = 32;
+    private static final int LANDING_SEARCH_NODE_LIMIT = 20_000;
     private Set<BetterBlockPos> badLandingSpots = new HashSet<>();
 
     private BetterBlockPos findSafeLandingSpot(BetterBlockPos start) {
-        Queue<BetterBlockPos> queue = new PriorityQueue<>(Comparator.<BetterBlockPos>comparingInt(pos -> (pos.x - start.x) * (pos.x - start.x) + (pos.z - start.z) * (pos.z - start.z)).thenComparingInt(pos -> -pos.y));
+        Queue<BetterBlockPos> queue = new PriorityQueue<>(Comparator.<BetterBlockPos>comparingLong(pos -> {
+            final long dx = (long) pos.x - start.x;
+            final long dz = (long) pos.z - start.z;
+            return dx * dx + dz * dz;
+        }));
         Set<BetterBlockPos> visited = new HashSet<>();
         LongOpenHashSet checkedPositions = new LongOpenHashSet();
         queue.add(start);
+        visited.add(start);
 
-        while (!queue.isEmpty()) {
+        int examined = 0;
+        while (!queue.isEmpty() && examined++ < LANDING_SEARCH_NODE_LIMIT) {
             BetterBlockPos pos = queue.poll();
             if (ctx.world().isLoaded(pos) && isInBounds(pos) && ctx.world().getBlockState(pos).getBlock() == Blocks.AIR) {
                 BetterBlockPos actualLandingSpot = checkLandingSpot(pos, checkedPositions);
                 if (actualLandingSpot != null && isColumnAir(actualLandingSpot, LANDING_COLUMN_HEIGHT) && hasAirBubble(actualLandingSpot.above(LANDING_COLUMN_HEIGHT)) && !badLandingSpots.contains(actualLandingSpot.above(LANDING_COLUMN_HEIGHT))) {
                     return actualLandingSpot.above(LANDING_COLUMN_HEIGHT);
                 }
-                if (visited.add(pos.north())) queue.add(pos.north());
-                if (visited.add(pos.east())) queue.add(pos.east());
-                if (visited.add(pos.south())) queue.add(pos.south());
-                if (visited.add(pos.west())) queue.add(pos.west());
-                if (visited.add(pos.above())) queue.add(pos.above());
-                if (visited.add(pos.below())) queue.add(pos.below());
             }
+            // checkLandingSpot already scans the entire vertical column. Expanding Y here
+            // repeated that scan thousands of times and could freeze the render thread.
+            enqueueLandingCandidate(pos.north(), start, visited, queue);
+            enqueueLandingCandidate(pos.east(), start, visited, queue);
+            enqueueLandingCandidate(pos.south(), start, visited, queue);
+            enqueueLandingCandidate(pos.west(), start, visited, queue);
         }
         return null;
+    }
+
+    private static void enqueueLandingCandidate(BetterBlockPos candidate, BetterBlockPos start,
+                                                Set<BetterBlockPos> visited, Queue<BetterBlockPos> queue) {
+        if (!isWithinLandingSearch(candidate, start)) {
+            return;
+        }
+        if (visited.add(candidate)) {
+            queue.add(candidate);
+        }
+    }
+
+    static boolean isWithinLandingSearch(BetterBlockPos candidate, BetterBlockPos start) {
+        final long dx = (long) candidate.x - start.x;
+        final long dz = (long) candidate.z - start.z;
+        if (Math.abs(dx) > LANDING_SEARCH_HORIZONTAL_RADIUS
+                || Math.abs(dz) > LANDING_SEARCH_HORIZONTAL_RADIUS
+                || dx * dx + dz * dz > (long) LANDING_SEARCH_HORIZONTAL_RADIUS * LANDING_SEARCH_HORIZONTAL_RADIUS
+                || Math.abs((long) candidate.y - start.y) > LANDING_SEARCH_VERTICAL_RADIUS) {
+            return false;
+        }
+        return true;
     }
 }

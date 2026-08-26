@@ -42,6 +42,10 @@ public final class BetterBlockPos extends BlockPos {
     private static final long X_MASK = (1L << NUM_X_BITS) - 1L;
     private static final long Y_MASK = (1L << NUM_Y_BITS) - 1L;
     private static final long Z_MASK = (1L << NUM_Z_BITS) - 1L;
+    private static final int MIN_SERIALIZED_XZ = -(1 << (NUM_X_BITS - 1));
+    private static final int MAX_SERIALIZED_XZ = (1 << (NUM_X_BITS - 1)) - 1;
+    private static final int MIN_SERIALIZED_Y = -(1 << (NUM_Y_BITS - 1));
+    private static final int MAX_SERIALIZED_Y = (1 << (NUM_Y_BITS - 1)) - 1;
 
     public static final BetterBlockPos ORIGIN = new BetterBlockPos(0, 0, 0);
 
@@ -235,7 +239,16 @@ public final class BetterBlockPos extends BlockPos {
         );
     }
 
+    public static boolean isValidForLongSerialization(final long x, final long y, final long z) {
+        return x >= MIN_SERIALIZED_XZ && x <= MAX_SERIALIZED_XZ
+                && y >= MIN_SERIALIZED_Y && y <= MAX_SERIALIZED_Y
+                && z >= MIN_SERIALIZED_XZ && z <= MAX_SERIALIZED_XZ;
+    }
+
     public static long serializeToLong(final int x, final int y, final int z) {
+        if (!isValidForLongSerialization(x, y, z)) {
+            throw new IllegalArgumentException("Position is outside the lossless serialized range: " + x + ", " + y + ", " + z);
+        }
         return ((long) x & X_MASK) << X_SHIFT | ((long) y & Y_MASK) << Y_SHIFT | ((long) z & Z_MASK);
     }
 

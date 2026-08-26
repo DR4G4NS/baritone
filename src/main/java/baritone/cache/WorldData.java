@@ -39,6 +39,7 @@ public class WorldData implements IWorldData {
     //public final MapData map;
     public final Path directory;
     public final DimensionType dimension;
+    private int users;
 
     WorldData(Path directory, DimensionType dimension, ResourceKey<Level> dimensionId) {
         this.directory = directory;
@@ -48,10 +49,29 @@ public class WorldData implements IWorldData {
     }
 
     public void onClose() {
+        cache.close();
         Baritone.getExecutor().execute(() -> {
             System.out.println("Started saving the world in a new thread");
             cache.save();
         });
+    }
+
+    synchronized void retain() {
+        if (cache.isClosed()) {
+            throw new IllegalStateException("Cannot retain closed world data");
+        }
+        users++;
+    }
+
+    synchronized boolean release() {
+        if (users <= 0) {
+            throw new IllegalStateException("World data released more times than retained");
+        }
+        return --users == 0;
+    }
+
+    synchronized int users() {
+        return users;
     }
 
     @Override

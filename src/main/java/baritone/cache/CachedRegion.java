@@ -298,7 +298,7 @@ public final class CachedRegion implements ICachedRegion {
                             int regionZ = this.z;
                             int chunkX = x + 32 * regionX;
                             int chunkZ = z + 32 * regionZ;
-                            this.chunks[x][z] = new CachedChunk(chunkX, chunkZ, dimension.height(), bitSets[x][z], overview[x][z], location[x][z], cacheTimestamp[x][z]);
+                            this.chunks[x][z] = new CachedChunk(chunkX, chunkZ, dimension.minY(), dimension.height(), bitSets[x][z], overview[x][z], location[x][z], cacheTimestamp[x][z]);
                         }
                     }
                 }

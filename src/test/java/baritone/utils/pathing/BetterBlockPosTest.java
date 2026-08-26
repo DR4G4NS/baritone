@@ -23,6 +23,9 @@ import net.minecraft.core.Direction;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class BetterBlockPosTest {
@@ -75,6 +78,43 @@ public class BetterBlockPosTest {
             assertEquals(pos.west(i), better.west(i));
         }
         assertTrue(better.relative((Direction) null, 0) == better);
+    }
+
+    @Test
+    public void serializedPositionsRoundTripWithinSupportedWorldBounds() {
+        int[] horizontal = {-29_999_984, -1, 0, 1, 29_999_984};
+        int[] vertical = {-2_048, -64, 0, 319, 2_047};
+        for (int x : horizontal) {
+            for (int y : vertical) {
+                for (int z : horizontal) {
+                    BetterBlockPos expected = new BetterBlockPos(x, y, z);
+                    assertEquals(expected, BetterBlockPos.deserializeFromLong(BetterBlockPos.serializeToLong(x, y, z)));
+                }
+            }
+        }
+    }
+
+    @Test
+    public void serializationSeparatesKnownLongHashCollision() {
+        BetterBlockPos first = new BetterBlockPos(0, 0, 0);
+        BetterBlockPos second = new BetterBlockPos(0, 1, -2_873_465);
+
+        assertEquals(BetterBlockPos.longHash(first), BetterBlockPos.longHash(second));
+        assertNotEquals(
+                BetterBlockPos.serializeToLong(first.x, first.y, first.z),
+                BetterBlockPos.serializeToLong(second.x, second.y, second.z)
+        );
+    }
+
+    @Test
+    public void serializationRejectsCoordinatesThatWouldBeTruncated() {
+        assertTrue(BetterBlockPos.isValidForLongSerialization(-33_554_432, -2_048, 33_554_431));
+        assertTrue(BetterBlockPos.isValidForLongSerialization(33_554_431, 2_047, -33_554_432));
+        assertFalse(BetterBlockPos.isValidForLongSerialization(-33_554_433L, 0, 0));
+        assertFalse(BetterBlockPos.isValidForLongSerialization(0, 2_048, 0));
+        assertFalse(BetterBlockPos.isValidForLongSerialization(0, 0, 33_554_432L));
+
+        assertThrows(IllegalArgumentException.class, () -> BetterBlockPos.serializeToLong(0, 2_048, 0));
     }
 
     public void benchOne() {

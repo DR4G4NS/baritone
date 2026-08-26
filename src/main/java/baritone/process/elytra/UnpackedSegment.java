@@ -75,9 +75,15 @@ public final class UnpackedSegment {
     }
 
     public static UnpackedSegment from(final PathSegment segment) {
+        return from(segment, 0, segment.finished);
+    }
+
+    public static UnpackedSegment from(final PathSegment segment, final int verticalOffset, final boolean finished) {
         return new UnpackedSegment(
-                Arrays.stream(segment.packed).mapToObj(BetterBlockPos::deserializeFromLong),
-                segment.finished
+                Arrays.stream(segment.packed)
+                        .mapToObj(BetterBlockPos::deserializeFromLong)
+                        .map(pos -> new BetterBlockPos(pos.x, pos.y + verticalOffset, pos.z)),
+                finished
         );
     }
 }

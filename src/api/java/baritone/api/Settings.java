@@ -1453,6 +1453,12 @@ public final class Settings {
     public final Setting<Double> elytraFireworkSpeed = new Setting<>(1.2);
 
     /**
+     * Elytra energy policy: min maximizes momentum and minimizes fireworks, med is balanced, and max targets the
+     * highest useful vanilla firework speed without firing while a boost is still contributing.
+     */
+    public final Setting<String> elytraFlightProfile = new Setting<>("med");
+
+    /**
      * The delay after the player's position is set-back by the server that a firework may be automatically deployed.
      * Value is in ticks.
      */
@@ -1497,6 +1503,12 @@ public final class Settings {
      * Defaults to 2b2t's nether seed.
      */
     public final Setting<Long> elytraNetherSeed = new Setting<>(146008555100680L);
+
+    /**
+     * Automatically request/read the world seed when permitted and enable native Nether prediction. Disable this on
+     * servers whose terrain generator does not match vanilla even when they expose /seed.
+     */
+    public final Setting<Boolean> elytraAutoSeedAndPrediction = new Setting<>(true);
 
     /**
      * Whether nether-pathfinder should generate terrain based on {@link #elytraNetherSeed}.

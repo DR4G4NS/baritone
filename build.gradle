@@ -131,6 +131,19 @@ sourceSets {
         compileClasspath += main.compileClasspath + main.runtimeClasspath + main.output
         runtimeClasspath += main.compileClasspath + main.runtimeClasspath + main.output
     }
+    testkit
+    deterministicTest {
+        compileClasspath += testkit.output
+        runtimeClasspath += testkit.output
+    }
+    headlessReplayTest {
+        compileClasspath += testkit.output
+        runtimeClasspath += testkit.output
+    }
+    benchmark {
+        compileClasspath += testkit.output
+        runtimeClasspath += testkit.output
+    }
     launch {
         compileClasspath += main.compileClasspath + main.runtimeClasspath + main.output
         runtimeClasspath += main.compileClasspath + main.runtimeClasspath + main.output
@@ -145,9 +158,44 @@ sourceSets {
     }
 }
 
+configurations {
+    deterministicTestImplementation.extendsFrom testImplementation
+    deterministicTestRuntimeOnly.extendsFrom testRuntimeOnly
+    headlessReplayTestImplementation.extendsFrom testImplementation
+    headlessReplayTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
 dependencies {
     testImplementation 'junit:junit:4.13.2'
 }
+
+tasks.register('deterministicTest', Test) {
+    description = 'Runs deterministic pure-Java pathfinding testkit tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.deterministicTest.output.classesDirs
+    classpath = sourceSets.deterministicTest.runtimeClasspath
+    useJUnit()
+    shouldRunAfter tasks.test
+}
+
+tasks.register('headlessReplayTest', Test) {
+    description = 'Runs deterministic headless replay infrastructure tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.headlessReplayTest.output.classesDirs
+    classpath = sourceSets.headlessReplayTest.runtimeClasspath
+    useJUnit()
+    shouldRunAfter tasks.deterministicTest
+}
+
+tasks.register('benchmark', JavaExec) {
+    description = 'Runs the reproducible pure-Java pathfinding testkit benchmark.'
+    group = 'verification'
+    classpath = sourceSets.benchmark.runtimeClasspath
+    mainClass = 'baritone.testkit.benchmark.PathfindingTestkitBenchmark'
+    args layout.buildDirectory.file('benchmarks/pathfinding-testkit.json').get().asFile.absolutePath
+}
+
+check.dependsOn tasks.deterministicTest, tasks.headlessReplayTest
 
 jar {
     from sourceSets.main.output, sourceSets.launch.output, sourceSets.api.output

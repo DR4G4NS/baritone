@@ -30,6 +30,8 @@ import static org.junit.Assert.*;
 @RunWith(Parameterized.class)
 public class OpenSetsTest {
 
+    private static final long RANDOM_SEED = 0x4F50454E534554L;
+
     private final int size;
 
     public OpenSetsTest(int size) {
@@ -53,7 +55,6 @@ public class OpenSetsTest {
     private static void removeAndTest(int amount, IOpenSet[] test, Collection<PathNode> mustContain) {
         double[][] results = new double[test.length][amount];
         for (int i = 0; i < test.length; i++) {
-            long before = System.nanoTime() / 1000000L;
             for (int j = 0; j < amount; j++) {
                 PathNode pn = test[i].removeLowest();
                 if (mustContain != null && !mustContain.contains(pn)) {
@@ -61,7 +62,6 @@ public class OpenSetsTest {
                 }
                 results[i][j] = pn.combinedCost;
             }
-            System.out.println(test[i].getClass() + " " + (System.nanoTime() / 1000000L - before));
         }
         for (int j = 0; j < amount; j++) {
             for (int i = 1; i < test.length; i++) {
@@ -75,7 +75,7 @@ public class OpenSetsTest {
 
     @Test
     public void testSize() {
-        System.out.println("Testing size " + size);
+        Random random = new Random(RANDOM_SEED ^ size);
         // Include LinkedListOpenSet even though it's not performant because I absolutely trust that it behaves properly
         // I'm really testing the heap implementations against it as the ground truth
         IOpenSet[] test = new IOpenSet[]{new BinaryHeapOpenSet(), new LinkedListOpenSet()};
@@ -100,7 +100,7 @@ public class OpenSetsTest {
                     return 0;
                 }
             });
-            pn.combinedCost = Math.random();
+            pn.combinedCost = random.nextDouble();
             toInsert[i] = pn;
         }
 
@@ -114,14 +114,10 @@ public class OpenSetsTest {
             assertTrue(set.isEmpty());
         }
 
-        System.out.println("Insertion");
         for (IOpenSet set : test) {
-            long before = System.nanoTime() / 1000000L;
-            for (int i = 0; i < size; i++)
+            for (int i = 0; i < size; i++) {
                 set.insert(toInsert[i]);
-            System.out.println(set.getClass() + " " + (System.nanoTime() / 1000000L - before));
-            //all three take either 0 or 1ms to insert up to 10,000 nodes
-            //linkedlist takes 0ms most often (because there's no array resizing or allocation there, just pointer shuffling)
+            }
         }
 
         // all opensets should now be full
@@ -129,7 +125,6 @@ public class OpenSetsTest {
             assertFalse(set.isEmpty());
         }
 
-        System.out.println("Removal round 1");
         // remove a quarter of the nodes and verify that they are indeed the size/4 lowest ones
         removeAndTest(size / 4, test, lowestQuarter);
 
@@ -142,7 +137,7 @@ public class OpenSetsTest {
             if (lowestQuarter.contains(toInsert[i])) { // these were already removed and can't be updated to test
                 continue;
             }
-            toInsert[i].combinedCost *= Math.random();
+            toInsert[i].combinedCost *= random.nextDouble();
             // multiplying it by a random number between 0 and 1 is guaranteed to decrease it
             for (IOpenSet set : test) {
                 // it's difficult to benchmark these individually because if you modify all at once then update then
@@ -158,7 +153,6 @@ public class OpenSetsTest {
             assertFalse(set.isEmpty());
         }
 
-        System.out.println("Removal round 2");
         // remove the remaining 3/4
         removeAndTest(size - size / 4, test, null);
 

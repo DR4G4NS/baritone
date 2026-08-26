@@ -27,13 +27,13 @@ import baritone.api.command.helpers.TabCompleteHelper;
 import baritone.api.pathing.goals.Goal;
 import baritone.api.process.ICustomGoalProcess;
 import baritone.api.process.IElytraProcess;
+import baritone.process.elytra.ElytraSeedDiscovery;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.multiplayer.ServerData;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.world.level.Level;
 
 import java.util.Arrays;
 import java.util.List;
@@ -55,31 +55,18 @@ public class ElytraCommand extends Command {
             logDirect(elytra.isLoaded() ? "yes" : unsupportedSystemMessage());
             return;
         }
-        if (!elytra.isLoaded()) {
-            throw new CommandInvalidStateException(unsupportedSystemMessage());
-        }
 
         if (!args.hasAny()) {
-            if (Baritone.settings().elytraTermsAccepted.value) {
-                if (detectOn2b2t()) {
-                    warn2b2t();
-                }
-            } else {
-                gatekeep();
-            }
             Goal iGoal = customGoalProcess.mostRecentGoal();
             if (iGoal == null) {
                 throw new CommandInvalidStateException("No goal has been set");
             }
-            if (ctx.world().dimension() != Level.NETHER) {
-                throw new CommandInvalidStateException("Only works in the nether");
-            }
-            try {
-                elytra.pathTo(iGoal);
-            } catch (IllegalArgumentException ex) {
-                throw new CommandInvalidStateException(ex.getMessage());
-            }
+            start(iGoal);
             return;
+        }
+
+        if (!elytra.isLoaded()) {
+            throw new CommandInvalidStateException(unsupportedSystemMessage());
         }
 
         final String action = args.getString();
@@ -97,6 +84,26 @@ public class ElytraCommand extends Command {
             default: {
                 throw new CommandInvalidStateException("Invalid action");
             }
+        }
+    }
+
+    void start(Goal goal) throws CommandException {
+        final IElytraProcess elytra = baritone.getElytraProcess();
+        if (!elytra.isLoaded()) {
+            throw new CommandInvalidStateException(unsupportedSystemMessage());
+        }
+        ElytraSeedDiscovery.tryDiscover(ctx);
+        if (Baritone.settings().elytraTermsAccepted.value) {
+            if (detectOn2b2t()) {
+                warn2b2t();
+            }
+        } else {
+            gatekeep();
+        }
+        try {
+            elytra.pathTo(goal);
+        } catch (IllegalArgumentException ex) {
+            throw new CommandInvalidStateException(ex.getMessage());
         }
     }
 
@@ -202,7 +209,7 @@ public class ElytraCommand extends Command {
     @Override
     public List<String> getLongDesc() {
         return Arrays.asList(
-                "The elytra command tells baritone to, in the nether, automatically fly to the current goal.",
+                "The elytra command tells baritone to automatically fly to the current goal in the current dimension.",
                 "",
                 "Usage:",
                 "> elytra - fly to the current goal",

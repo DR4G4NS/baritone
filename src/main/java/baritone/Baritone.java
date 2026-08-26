@@ -44,9 +44,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
-import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 /**
@@ -56,9 +57,25 @@ import java.util.function.Function;
 public class Baritone implements IBaritone {
 
     private static final ThreadPoolExecutor threadPool;
+    private static final int EXECUTOR_THREADS = 4;
+    private static final int EXECUTOR_QUEUE_CAPACITY = 256;
 
     static {
-        threadPool = new ThreadPoolExecutor(4, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS, new SynchronousQueue<>());
+        AtomicInteger threadIds = new AtomicInteger();
+        threadPool = new ThreadPoolExecutor(
+                EXECUTOR_THREADS,
+                EXECUTOR_THREADS,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(EXECUTOR_QUEUE_CAPACITY),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "Baritone Worker #" + threadIds.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                // Apply bounded backpressure instead of creating unbounded threads or dropping path work.
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 
     private final Minecraft mc;
@@ -260,5 +277,13 @@ public class Baritone implements IBaritone {
 
     public static Executor getExecutor() {
         return threadPool;
+    }
+
+    static int getExecutorMaximumPoolSize() {
+        return threadPool.getMaximumPoolSize();
+    }
+
+    static int getExecutorQueueCapacity() {
+        return EXECUTOR_QUEUE_CAPACITY;
     }
 }
