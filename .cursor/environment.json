@@ -1,0 +1,5 @@
+{
+    "name": "Baritone (26.1 / JDK 25)",
+    "user": "ubuntu",
+    "install": "./.cursor/install.sh"
+}
