@@ -65,8 +65,8 @@ import static baritone.api.pathing.movement.ActionCosts.COST_INF;
 
 public class ElytraProcess extends BaritoneProcessHelper implements IBaritoneProcess, IElytraProcess, AbstractGameEventListener {
     static final double LANDING_APPROACH_DISTANCE = 16.0;
-    static final double LANDING_CAPTURE_HORIZONTAL_DISTANCE = 8.0;
-    static final double LANDING_CAPTURE_VERTICAL_DISTANCE = 12.0;
+    static final double LANDING_CAPTURE_HORIZONTAL_DISTANCE = 12.0;
+    static final double LANDING_CAPTURE_VERTICAL_DISTANCE = 16.0;
     public State state;
     private boolean goingToLandingSpot;
     private BetterBlockPos landingSpot;

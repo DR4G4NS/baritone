@@ -938,6 +938,13 @@ public final class ElytraBehavior implements Helper {
         if (this.landingMode && !forceUseFirework) {
             return false;
         }
+        if (this.appendDestination && !forceUseFirework) {
+            final double dx = start.x - goingTo.x;
+            final double dz = start.z - goingTo.z;
+            if (dx * dx + dz * dz < 24.0D * 24.0D) {
+                return false;
+            }
+        }
         final ElytraFlightProfile profile = ElytraFlightProfile.fromSetting(Baritone.settings().elytraFlightProfile.value);
         final boolean conserveOnDescent = profile.conserveOnDescent(Baritone.settings().elytraConserveFireworks.value);
         final boolean useOnDescend = !conserveOnDescent || ctx.player().position().y < goingTo.y + 5;

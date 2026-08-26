@@ -25,8 +25,8 @@ public class ElytraProcessTest {
         Vec3 top = new Vec3(48.5, 85.5, 0.5);
         assertTrue(ElytraProcess.isInsideLandingCapture(new Vec3(51.9, 81.0, 1.0), top));
         assertTrue(ElytraProcess.isInsideLandingCapture(new Vec3(55.5, 90.0, 0.5), top));
-        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(57.0, 85.5, 0.5), top));
-        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(48.5, 72.0, 0.5), top));
+        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(61.0, 85.5, 0.5), top));
+        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(48.5, 68.0, 0.5), top));
     }
 
     @Test

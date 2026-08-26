@@ -85,8 +85,10 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
                     assertStopped(context, "cancel-and-retarget");
                 }
 
-                runOpenOverworldElytraCommandScenario(context, singleplayer);
-                runNetherLavaElytraCommandScenario(context, singleplayer);
+                if (!Boolean.parseBoolean(System.getenv("BARITONE_ELYTRA_LANDING_ONLY"))) {
+                    runOpenOverworldElytraCommandScenario(context, singleplayer);
+                    runNetherLavaElytraCommandScenario(context, singleplayer);
+                }
                 runDimensionElytraLandingScenario(context, singleplayer, Level.OVERWORLD,
                         "minecraft:overworld", "minecraft:stone", "overworld");
                 runDimensionElytraLandingScenario(context, singleplayer, Level.NETHER,
