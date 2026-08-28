@@ -71,7 +71,11 @@ import static baritone.utils.BaritoneMath.fastFloor;
 
 public final class ElytraBehavior implements Helper {
     static final double LANDING_FLARE_DESCENT_SPEED = -0.35;
+    static final double LANDING_RECOVERY_DESCENT_SPEED = -0.40;
+    static final double VANILLA_FALL_DISTANCE_RESET_SPEED = -0.5;
     static final float LANDING_FLARE_PITCH = -30.0F;
+    static final float LANDING_RECOVERY_PITCH = -80.0F;
+    static final int LANDING_RECOVERY_ROCKET_COOLDOWN_TICKS = 20;
     private final Baritone baritone;
     private final IPlayerContext ctx;
 
@@ -107,7 +111,7 @@ public final class ElytraBehavior implements Helper {
     private int minimumBoostTicks;
 
     private boolean deployedFireworkLastTick;
-    private boolean landingRecoveryRocketUsed;
+    private int landingRecoveryRocketCooldown;
     private boolean noFireworksWarningAnnounced;
     private int chunkWaitRocketCooldown;
     private final int[] nextTickBoostCounter;
@@ -275,8 +279,8 @@ public final class ElytraBehavior implements Helper {
                             final Throwable cause = ex.getCause();
                             if (cause instanceof PathCalculationException) {
                                 logDirect("Failed to compute next segment");
-                                if (ctx.player().distanceToSqr(pathStart.getCenter()) < 16 * 16) {
-                                    logVerbose("Player is near the segment start, therefore repeating this calculation is pointless. Marking as complete");
+                                if (ctx.player().distanceToSqr(ElytraBehavior.this.destination.getCenter()) < 16 * 16) {
+                                    logVerbose("Player is near the destination, therefore repeating this calculation is pointless. Marking as complete");
                                     completePath = true;
                                 }
                             } else {
@@ -288,7 +292,7 @@ public final class ElytraBehavior implements Helper {
 
         public void clear() {
             this.path = NetherPath.emptyPath();
-            this.completePath = true;
+            this.completePath = false;
             this.recalculating = false;
             this.playerNear = 0;
             this.ticksNearUnchanged = 0;
@@ -748,39 +752,59 @@ public final class ElytraBehavior implements Helper {
         if (inLava) {
             baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
         }
+        if (this.landingRecoveryRocketCooldown > 0) {
+            this.landingRecoveryRocketCooldown--;
+        }
+
+        final Vec3 start = solution != null ? solution.context.start : ctx.player().position();
+        final double verticalSpeed = ctx.player().getDeltaMovement().y;
+        final double heightAboveLandingSurface = this.landingMode && this.destination != null
+                ? start.y - (this.destination.getY() - ElytraProcess.LANDING_COLUMN_HEIGHT - 0.5D)
+                : Double.POSITIVE_INFINITY;
+        final boolean needsLandingRecovery = this.landingMode
+                && requiresLandingBoost(heightAboveLandingSurface, verticalSpeed, this.landingRecoveryRocketCooldown > 0);
+        final float solvedPitch = solution != null ? solution.rotation.getPitch() : ctx.playerRotations().getPitch();
+        final float landingCommandPitch = needsLandingRecovery
+                ? LANDING_RECOVERY_PITCH
+                : landingPitch(heightAboveLandingSurface, verticalSpeed, solvedPitch);
+        final boolean emergencyLandingBoost = canDeployLandingRecovery(needsLandingRecovery, ctx.playerRotations().getPitch());
 
         if (solution == null) {
+            if (this.landingMode && this.destination != null) {
+                final Vec3 pad = this.destination.getCenter();
+                final float yaw = RotationUtils.calcRotationFromVec3d(
+                        start,
+                        new Vec3(pad.x, start.y, pad.z),
+                        ctx.playerRotations()
+                ).getYaw();
+                baritone.getLookBehavior().updateTarget(new Rotation(yaw, landingCommandPitch), false);
+                if (environmentalEmergency || emergencyLandingBoost) {
+                    final boolean deployedRecoveryRocket = this.tickUseFireworks(start, pad, false, true);
+                    if (emergencyLandingBoost && deployedRecoveryRocket) {
+                        this.landingRecoveryRocketCooldown = LANDING_RECOVERY_ROCKET_COOLDOWN_TICKS;
+                    }
+                }
+            }
             logVerbose("no solution");
             return;
         }
 
-        final double verticalSpeed = ctx.player().getDeltaMovement().y;
-        final double heightAboveLandingSurface = this.landingMode && this.destination != null
-                ? solution.context.start.y - (this.destination.getY() - ElytraProcess.LANDING_COLUMN_HEIGHT - 0.5D)
-                : Double.POSITIVE_INFINITY;
-        final boolean needsLandingRecovery = this.landingMode
-                && requiresLandingBoost(heightAboveLandingSurface, verticalSpeed, this.landingRecoveryRocketUsed);
-        final boolean emergencyLandingBoost = needsLandingRecovery
-                && ctx.playerRotations().getPitch() <= -20.0F;
         final Rotation commandedRotation;
         if (environmentalEmergency) {
             commandedRotation = new Rotation(solution.rotation.getYaw(), Math.min(solution.rotation.getPitch(), -45.0F));
         } else if (this.landingMode) {
-            commandedRotation = new Rotation(
-                    solution.rotation.getYaw(),
-                    needsLandingRecovery
-                            ? -25.0F
-                            : landingPitch(heightAboveLandingSurface, verticalSpeed, solution.rotation.getPitch())
-            );
+            commandedRotation = new Rotation(solution.rotation.getYaw(), landingCommandPitch);
         } else {
             commandedRotation = solution.rotation;
         }
         baritone.getLookBehavior().updateTarget(commandedRotation, false);
-        if (!solution.solvedPitch) {
-            logVerbose("no pitch solution, probably gonna crash in a few ticks LOL!!!");
-            return;
-        } else {
+        if (solution.solvedPitch) {
             this.aimPos = new BetterBlockPos(solution.goingTo.x, solution.goingTo.y, solution.goingTo.z);
+        } else {
+            logVerbose("no pitch solution, probably gonna crash in a few ticks LOL!!!");
+            if (!this.landingMode) {
+                return;
+            }
         }
 
         final boolean forceUseFirework = this.landingMode
@@ -793,7 +817,7 @@ public final class ElytraBehavior implements Helper {
                 forceUseFirework
         );
         if (emergencyLandingBoost && deployedRecoveryRocket) {
-            this.landingRecoveryRocketUsed = true;
+            this.landingRecoveryRocketCooldown = LANDING_RECOVERY_ROCKET_COOLDOWN_TICKS;
         }
     }
 
@@ -913,6 +937,13 @@ public final class ElytraBehavior implements Helper {
         }
         if (this.landingMode && !forceUseFirework) {
             return false;
+        }
+        if (this.appendDestination && !forceUseFirework) {
+            final double dx = start.x - goingTo.x;
+            final double dz = start.z - goingTo.z;
+            if (dx * dx + dz * dz < 24.0D * 24.0D) {
+                return false;
+            }
         }
         final ElytraFlightProfile profile = ElytraFlightProfile.fromSetting(Baritone.settings().elytraFlightProfile.value);
         final boolean conserveOnDescent = profile.conserveOnDescent(Baritone.settings().elytraConserveFireworks.value);
@@ -1228,33 +1259,33 @@ public final class ElytraBehavior implements Helper {
         return verticalSpeed < LANDING_FLARE_DESCENT_SPEED;
     }
 
-    static boolean requiresLandingBoost(double heightAboveSurface, double verticalSpeed, boolean recoveryRocketUsed) {
-        return !recoveryRocketUsed
-                && heightAboveSurface > 6.0D
-                && heightAboveSurface <= 14.0D
-                && verticalSpeed < -0.18D;
+    static boolean requiresLandingBoost(double heightAboveSurface, double verticalSpeed, boolean recoveryRocketOnCooldown) {
+        return !recoveryRocketOnCooldown
+                && heightAboveSurface > 5.0D
+                && heightAboveSurface <= 18.0D
+                && verticalSpeed < LANDING_RECOVERY_DESCENT_SPEED;
+    }
+
+    static boolean canDeployLandingRecovery(boolean needsLandingRecovery, float currentPitch) {
+        // Firework acceleration follows the current look vector. Wait until the player is
+        // actually flaring so a delayed look tick cannot boost a dive into the ground.
+        return needsLandingRecovery && currentPitch <= -50.0F;
     }
 
     static float landingPitch(double heightAboveSurface, double verticalSpeed, float solvedPitch) {
-        if (requiresLandingFlare(verticalSpeed)) {
+        if (requiresLandingFlare(verticalSpeed) || verticalSpeed < VANILLA_FALL_DISTANCE_RESET_SPEED) {
             return Math.min(solvedPitch, LANDING_FLARE_PITCH);
         }
-        if (heightAboveSurface > 40.0D) {
-            return Math.max(solvedPitch, 20.0F);
+        if (heightAboveSurface > 32.0D) {
+            return Math.max(solvedPitch, 10.0F);
         }
-        if (heightAboveSurface > 20.0D) {
-            return Math.max(solvedPitch, 8.0F);
-        }
-        if (heightAboveSurface > 14.0D) {
+        if (heightAboveSurface > 18.0D) {
             return Math.max(solvedPitch, 0.0F);
         }
-        if (heightAboveSurface > 7.0D) {
+        if (heightAboveSurface > 10.0D) {
             return Math.min(solvedPitch, -18.0F);
         }
-        if (heightAboveSurface <= 7.0D) {
-            return Math.min(solvedPitch, LANDING_FLARE_PITCH);
-        }
-        return solvedPitch;
+        return Math.min(solvedPitch, LANDING_FLARE_PITCH);
     }
 
     static boolean shouldWaitForChunks(double loadedHorizon, double horizontalSpeed, double profileHorizon) {

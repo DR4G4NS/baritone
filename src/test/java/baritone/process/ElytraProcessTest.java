@@ -1,7 +1,7 @@
 package baritone.process;
 
-import org.junit.Test;
 import net.minecraft.world.phys.Vec3;
+import org.junit.Test;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -24,8 +24,16 @@ public class ElytraProcessTest {
     public void landingColumnUsesAFlightAppropriateCaptureCylinder() {
         Vec3 top = new Vec3(48.5, 85.5, 0.5);
         assertTrue(ElytraProcess.isInsideLandingCapture(new Vec3(51.9, 81.0, 1.0), top));
-        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(53.0, 85.5, 0.5), top));
-        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(48.5, 78.0, 0.5), top));
+        assertTrue(ElytraProcess.isInsideLandingCapture(new Vec3(55.5, 90.0, 0.5), top));
+        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(61.0, 85.5, 0.5), top));
+        assertFalse(ElytraProcess.isInsideLandingCapture(new Vec3(48.5, 68.0, 0.5), top));
+    }
+
+    @Test
+    public void landingFlightControlsDoNotDisableRocketsDuringApproach() {
+        assertFalse(ElytraProcess.shouldUseLandingFlightControls(ElytraProcess.State.FLYING));
+        assertFalse(ElytraProcess.shouldUseLandingFlightControls(ElytraProcess.State.START_FLYING));
+        assertTrue(ElytraProcess.shouldUseLandingFlightControls(ElytraProcess.State.LANDING));
     }
 
     @Test

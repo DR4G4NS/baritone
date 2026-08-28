@@ -25,7 +25,6 @@ import org.gradle.api.tasks.TaskAction;
 import org.gradle.api.tasks.TaskCollection;
 import org.gradle.api.tasks.compile.ForkOptions;
 import org.gradle.api.tasks.compile.JavaCompile;
-import org.gradle.internal.jvm.Jvm;
 import org.gradle.jvm.toolchain.JavaLanguageVersion;
 import org.gradle.jvm.toolchain.JavaLauncher;
 import org.gradle.jvm.toolchain.JavaToolchainService;
@@ -132,9 +131,7 @@ public class ProguardTask extends BaritoneGradleTask {
         template.add(0, "-injars '" + this.artifactPath.toString() + "'");
         template.add(1, "-outjars '" + this.getTemporaryFile(PROGUARD_EXPORT_PATH) + "'");
 
-        template.add(2, "-libraryjars  \"C:/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot/jmods/java.base.jmod\"(!**.jar;!module-info.class)");
-        template.add(3, "-libraryjars  \"C:/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot/jmods/java.desktop.jmod\"(!**.jar;!module-info.class)");
-        template.add(4, "-libraryjars  \"C:/Program Files/Eclipse Adoptium/jdk-21.0.5.11-hotspot/jmods/jdk.unsupported.jmod\"(!**.jar;!module-info.class)");
+        addJdkLibraryJars(template, 2);
 
         {
             final Stream<File> libraries;
@@ -172,6 +169,81 @@ public class ProguardTask extends BaritoneGradleTask {
         standalone.removeIf(s -> s.contains("# this is the keep api"));
         standalone.add(2, "-printmapping " + new File(this.getRootRelativeFile(PROGUARD_MAPPING_DIR).toFile(), "mappings-" + addCompTypeFirst("standalone.txt")));
         Files.write(getTemporaryFile(compType + PROGUARD_STANDALONE_CONFIG), standalone);
+    }
+
+    /**
+     * ProGuard needs the JDK runtime classes as library jars. Hardcoding a local Windows JDK 21
+     * path fails on CI. Prefer {@code jmods} from the toolchain JDK when present (Zulu still ships
+     * them). Temurin 25+ omits {@code jmods} (JEP 493), so fall back to {@code jimage extract}.
+     */
+    private void addJdkLibraryJars(List<String> template, int insertAt) throws Exception {
+        Path javaHome = getJavaLauncherForProguard().getMetadata()
+                .getInstallationPath()
+                .getAsFile()
+                .toPath();
+        String[] required = {
+                "java.base",
+                "java.desktop",
+                "jdk.unsupported"
+        };
+        int index = insertAt;
+        Path jmodsDir = javaHome.resolve("jmods");
+        if (Files.isRegularFile(jmodsDir.resolve("java.base.jmod"))) {
+            for (String module : required) {
+                Path jmod = jmodsDir.resolve(module + ".jmod");
+                if (!Files.isRegularFile(jmod)) {
+                    throw new IllegalStateException("Required JDK jmod missing: " + jmod);
+                }
+                template.add(index++, libraryJar(jmod, "(!**.jar;!module-info.class)"));
+            }
+            return;
+        }
+
+        Path runtimeImage = javaHome.resolve("lib").resolve("modules");
+        if (!Files.isRegularFile(runtimeImage)) {
+            throw new IllegalStateException(
+                    "Cannot resolve JDK classes for ProGuard: neither " + jmodsDir
+                            + " nor " + runtimeImage + " exists at " + javaHome);
+        }
+        Path modulesDir = extractRuntimeImageModules(javaHome, runtimeImage);
+        for (String module : required) {
+            Path moduleDir = modulesDir.resolve(module);
+            if (!Files.isDirectory(moduleDir)) {
+                throw new IllegalStateException("jimage extract did not produce module " + moduleDir);
+            }
+            template.add(index++, libraryJar(moduleDir, "(!module-info.class)"));
+        }
+    }
+
+    private static String libraryJar(Path path, String filter) {
+        return "-libraryjars  \"" + path.toAbsolutePath().toString().replace('\\', '/') + "\"" + filter;
+    }
+
+    private Path extractRuntimeImageModules(Path javaHome, Path runtimeImage) throws Exception {
+        Path modulesDir = getTemporaryFile("jdk-modules");
+        if (Files.isDirectory(modulesDir.resolve("java.base"))) {
+            return modulesDir;
+        }
+        Files.createDirectories(modulesDir);
+        String jimageName = System.getProperty("os.name", "").toLowerCase().contains("win")
+                ? "jimage.exe"
+                : "jimage";
+        Path jimage = javaHome.resolve("bin").resolve(jimageName);
+        if (!Files.isRegularFile(jimage)) {
+            throw new IllegalStateException("jimage not found at " + jimage);
+        }
+        Process process = new ProcessBuilder(
+                jimage.toAbsolutePath().toString(),
+                "extract",
+                "--dir", modulesDir.toAbsolutePath().toString(),
+                runtimeImage.toAbsolutePath().toString()
+        ).redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes());
+        int exit = process.waitFor();
+        if (exit != 0) {
+            throw new IllegalStateException("jimage extract failed (" + exit + "): " + output);
+        }
+        return modulesDir;
     }
 
     private Stream<File> acquireDependencies() {
