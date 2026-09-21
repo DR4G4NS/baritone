@@ -340,12 +340,19 @@ public final class ElytraBehavior implements Helper {
         }
 
         public double loadedHorizonDistance() {
+            return loadedHorizonDistance(Double.POSITIVE_INFINITY);
+        }
+
+        public double loadedHorizonDistance(double needed) {
             if (this.path.isEmpty()) {
                 return 0.0D;
             }
             double distance = ctx.player().position().distanceTo(this.path.getVec(this.playerNear));
             for (int i = this.playerNear; i < this.path.size(); i++) {
-                if (!ctx.world().isLoaded(this.path.get(i))) {
+                if (distance >= needed) {
+                    return distance;
+                }
+                if (!ctx.world().getChunkSource().hasChunk(this.path.get(i).x >> 4, this.path.get(i).z >> 4)) {
                     return distance;
                 }
                 if (i + 1 < this.path.size()) {
@@ -651,16 +658,18 @@ public final class ElytraBehavior implements Helper {
             currentSolver = this.solver;
         }
         if (currentSolver != null) {
-            try {
-                this.pendingSolution = currentSolver.get();
-            } catch (Exception ignored) {
-                // it doesn't matter if get() fails since the solution can just be recalculated synchronously
-            } finally {
-                synchronized (this.solverLifecycleLock) {
-                    if (this.solver == currentSolver) {
-                        this.solver = null;
-                    }
+            if (currentSolver.isDone()) {
+                try {
+                    this.pendingSolution = currentSolver.get();
+                } catch (Exception ignored) {
+                    // it doesn't matter if get() fails since the solution can just be recalculated synchronously
+                } finally {
+                    clearSolverIfCurrent(currentSolver);
                 }
+            } else {
+                // Don't block the render thread on a hard pitch solve; redo it synchronously.
+                currentSolver.cancel(true);
+                clearSolverIfCurrent(currentSolver);
             }
         }
 
@@ -706,6 +715,14 @@ public final class ElytraBehavior implements Helper {
         );
     }
 
+    private void clearSolverIfCurrent(Future<Solution> currentSolver) {
+        synchronized (this.solverLifecycleLock) {
+            if (this.solver == currentSolver) {
+                this.solver = null;
+            }
+        }
+    }
+
     /**
      * Called by {@link baritone.process.ElytraProcess#onTick(boolean, boolean)} when the process is in control and the player is flying
      */
@@ -718,7 +735,8 @@ public final class ElytraBehavior implements Helper {
 
         final ElytraFlightProfile profile = ElytraFlightProfile.fromSetting(Baritone.settings().elytraFlightProfile.value);
         final double horizontalSpeed = ctx.player().getDeltaMovement().multiply(1.0D, 0.0D, 1.0D).length();
-        final double loadedHorizon = this.pathManager.loadedHorizonDistance();
+        final double neededHorizon = Math.max(profile.loadedHorizon(), 24.0D + horizontalSpeed * 40.0D);
+        final double loadedHorizon = this.pathManager.loadedHorizonDistance(neededHorizon);
         if (!this.landingMode && shouldWaitForChunks(loadedHorizon, horizontalSpeed, profile.loadedHorizon())) {
             holdForChunkLoading();
             return;
@@ -856,6 +874,9 @@ public final class ElytraBehavior implements Helper {
             int minStep = playerNear;
 
             for (int i = Math.min(playerNear + 20, path.size() - 1); i >= minStep; i--) {
+                if (Thread.interrupted()) {
+                    return null;
+                }
                 final List<Pair<Vec3, Integer>> candidates = new ArrayList<>();
                 for (int dy : heights) {
                     if (relaxation == 0 || i == minStep) {
@@ -1209,7 +1230,8 @@ public final class ElytraBehavior implements Helper {
                     clear = false;
                 }
             }
-            return clear && (ignoreLava || isFluidSweepClear(
+            return clear && (ignoreLava || !ElytraDimensionPolicy.shouldSweepFluids(ctx.world().dimension())
+                    || isFluidSweepClear(
                     context.boundingBox.inflate(ElytraFlightProfile.fromSetting(
                             Baritone.settings().elytraFlightProfile.value).fluidMargin()),
                     start,
@@ -1218,7 +1240,8 @@ public final class ElytraBehavior implements Helper {
         }
 
         return this.context.raytrace(8, src, dst, NetherPathfinderContext.Visibility.ALL)
-                && (ignoreLava || isFluidSweepClear(
+                && (ignoreLava || !ElytraDimensionPolicy.shouldSweepFluids(ctx.world().dimension())
+                || isFluidSweepClear(
                 context.boundingBox.inflate(ElytraFlightProfile.fromSetting(
                         Baritone.settings().elytraFlightProfile.value).fluidMargin()),
                 start,
@@ -1531,8 +1554,9 @@ public final class ElytraBehavior implements Helper {
             motion = step(motion, lookDirection, rotation.getPitch());
             delta = delta.subtract(motion);
 
-            // Collision box while the player is in motion, with additional padding for safety
-            final AABB inMotion = hitbox.inflate(motion.x, motion.y, motion.z).inflate(0.01);
+            // Collision box while the player is in motion, with additional padding for safety.
+            // expandTowards keeps a directional swept volume (cabaletta/baritone#5047 / #5049).
+            final AABB inMotion = ElytraDimensionPolicy.sweptCollisionVolume(hitbox, motion);
 
             int xmin = fastFloor(inMotion.minX);
             int xmax = fastCeil(inMotion.maxX);

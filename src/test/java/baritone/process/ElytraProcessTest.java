@@ -37,6 +37,15 @@ public class ElytraProcessTest {
     }
 
     @Test
+    public void landingSearchIgnoresVerticalRadiusOnOpenHeightmaps() {
+        baritone.api.utils.BetterBlockPos start = new baritone.api.utils.BetterBlockPos(0, 200, 0);
+        assertTrue(ElytraProcess.isWithinLandingSearch(
+                new baritone.api.utils.BetterBlockPos(8, 80, 0), start, true));
+        assertFalse(ElytraProcess.isWithinLandingSearch(
+                new baritone.api.utils.BetterBlockPos(8, 80, 0), start, false));
+    }
+
+    @Test
     public void landingSearchIsBoundedAndOverflowSafe() {
         baritone.api.utils.BetterBlockPos start = new baritone.api.utils.BetterBlockPos(0, 90, 0);
         assertTrue(ElytraProcess.isWithinLandingSearch(new baritone.api.utils.BetterBlockPos(32, 80, 32), start));

@@ -89,6 +89,9 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
 
                 if (!Boolean.parseBoolean(System.getenv("BARITONE_ELYTRA_LANDING_ONLY"))) {
                     runOpenOverworldElytraCommandScenario(context, singleplayer);
+                    runOpenOverworldGoalXZScenario(context, singleplayer);
+                    runOpenNetherElytraCommandScenario(context, singleplayer);
+                    runOpenEndElytraCommandScenario(context, singleplayer);
                     // The legacy Nether lava cruise is opt-in: it is sensitive to chunk packing
                     // and often aborts into a spawn landing. The dedicated Nether landing
                     // scenario below is the reliable dimension coverage.
@@ -158,6 +161,31 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         prepareLoadedElytraCorridor(context, singleplayer, "minecraft:overworld", Level.OVERWORLD,
                 "minecraft:stone", 80, 81, 120);
         runElytraFlight(context, 40, false, singleplayer);
+        context.takeScreenshot("elytra-open-overworld");
+    }
+
+    private static void runOpenOverworldGoalXZScenario(ClientGameTestContext context,
+                                                       TestSingleplayerContext singleplayer) {
+        prepareLoadedElytraCorridor(context, singleplayer, "minecraft:overworld", Level.OVERWORLD,
+                "minecraft:stone", 80, 81, 120);
+        runElytraGoalXZFlight(context, 40, singleplayer);
+        context.takeScreenshot("elytra-open-overworld-goalxz");
+    }
+
+    private static void runOpenNetherElytraCommandScenario(ClientGameTestContext context,
+                                                           TestSingleplayerContext singleplayer) {
+        prepareLoadedElytraCorridor(context, singleplayer, "minecraft:the_nether", Level.NETHER,
+                "minecraft:netherrack", 80, 81, 120);
+        runElytraFlight(context, 40, false, singleplayer);
+        context.takeScreenshot("elytra-open-nether");
+    }
+
+    private static void runOpenEndElytraCommandScenario(ClientGameTestContext context,
+                                                        TestSingleplayerContext singleplayer) {
+        prepareLoadedElytraCorridor(context, singleplayer, "minecraft:the_end", Level.END,
+                "minecraft:end_stone", 80, 81, 120);
+        runElytraFlight(context, 40, false, singleplayer);
+        context.takeScreenshot("elytra-open-end");
     }
 
     private static void runNetherLavaElytraCommandScenario(ClientGameTestContext context,
@@ -177,6 +205,9 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
                                                     int airMaxY) {
         final String in = "execute in " + dimensionId + " run ";
         singleplayer.getServer().runCommand("gamemode creative " + PLAYER);
+        if (dimension == Level.END) {
+            singleplayer.getServer().runCommand(in + "kill @e[type=minecraft:ender_dragon]");
+        }
         singleplayer.getServer().runCommand("item replace entity " + PLAYER + " armor.chest with minecraft:elytra");
         giveBoostingRockets(singleplayer, 32);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5");
@@ -217,6 +248,16 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " 16 " + surfaceBlock);
         fillAirBox(singleplayer, in, -16, surfaceY + 1, -16, 80, 120, 16);
         encloseElytraCorridor(singleplayer, in, surfaceBlock, surfaceY + 1, 121);
+        if (dimension == Level.OVERWORLD) {
+            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " -12 minecraft:water");
+            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " 12 80 " + surfaceY + " 16 minecraft:water");
+        } else if (dimension == Level.NETHER) {
+            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " -12 minecraft:lava");
+            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " 12 80 " + surfaceY + " 16 minecraft:lava");
+        } else if (dimension == Level.END) {
+            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -8 12 " + surfaceY + " 8 minecraft:air");
+            singleplayer.getServer().runCommand(in + "fill 16 " + surfaceY + " -4 32 " + surfaceY + " 4 " + surfaceBlock);
+        }
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         context.waitTicks(20);
@@ -404,6 +445,75 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         if (!nearDestination) {
             throw new AssertionError("Open #elytragoto stopped without reaching destination tolerance; last state: "
                     + lastFlightState.get());
+        }
+    }
+
+    private static void runElytraGoalXZFlight(ClientGameTestContext context, int targetX,
+                                              TestSingleplayerContext singleplayer) {
+        singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
+        context.waitFor(client -> client.player.getItemBySlot(net.minecraft.world.entity.EquipmentSlot.CHEST)
+                .is(Items.ELYTRA), 200);
+        context.runOnClient(client -> {
+            Settings settings = BaritoneAPI.getSettings();
+            settings.elytraTermsAccepted.value = true;
+            settings.elytraPredictTerrain.value = false;
+            settings.elytraAutoJump.value = false;
+            settings.elytraMinFireworksBeforeLanding.value = 0;
+            settings.elytraAllowEmergencyLand.value = false;
+            settings.elytraAutoSeedAndPrediction.value = true;
+            settings.elytraFlightProfile.value = "med";
+        });
+        context.waitTicks(5);
+        AtomicBoolean touchedEnvironmentalHazard = new AtomicBoolean();
+        AtomicReference<String> lastFlightState = new AtomicReference<>("not airborne");
+        singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
+        double startY = context.computeOnClient(client -> client.player.getY());
+        context.runOnClient(client -> {
+            client.player.startFallFlying();
+            client.player.connection.send(new ServerboundPlayerCommandPacket(
+                    client.player,
+                    ServerboundPlayerCommandPacket.Action.START_FALL_FLYING
+            ));
+            if (!primary().getCommandManager().execute("elytragoto " + targetX + " 0")) {
+                throw new AssertionError("#elytragoto XZ was not accepted by the command manager");
+            }
+        });
+        context.waitFor(client -> {
+            recordFlightState(client.player, touchedEnvironmentalHazard, lastFlightState);
+            requireFlightAlive(client.player, lastFlightState);
+            return client.player != null && client.player.isFallFlying();
+        }, 200);
+        context.waitFor(client -> {
+            recordFlightState(client.player, touchedEnvironmentalHazard, lastFlightState);
+            requireFlightAlive(client.player, lastFlightState);
+            return (client.player != null && client.player.getX() > targetX - 10.0D)
+                    || !primary().getElytraProcess().isActive();
+        }, PATH_TIMEOUT_TICKS);
+        context.waitFor(client -> {
+            recordFlightState(client.player, touchedEnvironmentalHazard, lastFlightState);
+            requireFlightAlive(client.player, lastFlightState);
+            return !primary().getElytraProcess().isActive();
+        }, PATH_TIMEOUT_TICKS);
+        boolean healthyAtEnd = context.computeOnClient(client -> client.player != null
+                && client.player.isAlive() && !client.player.isInLava() && !client.player.isOnFire());
+        if (touchedEnvironmentalHazard.get() || !healthyAtEnd) {
+            throw new AssertionError("Open #elytragoto XZ touched lava, burned, or died; last state: "
+                    + lastFlightState.get());
+        }
+        double endY = context.computeOnClient(client -> client.player.getY());
+        if (Math.abs(endY - 64.0D) < 4.0D && Math.abs(startY - 64.0D) > 16.0D) {
+            throw new AssertionError("#elytragoto XZ used the legacy Y=64 cruise instead of player altitude "
+                    + startY + " (ended at " + endY + "); last state: " + lastFlightState.get());
+        }
+        boolean nearDestination = context.computeOnClient(client -> client.player != null
+                && client.player.position().distanceToSqr(targetX + 0.5D, client.player.getY(), 0.5D) <= 21.0D * 21.0D);
+        if (!nearDestination) {
+            throw new AssertionError("Open #elytragoto XZ stopped without reaching destination tolerance; last state: "
+                    + lastFlightState.get());
+        }
+        if (endY < 70.0D) {
+            throw new AssertionError("#elytragoto XZ dove into the ground; startY=" + startY + " endY=" + endY
+                    + "; last state: " + lastFlightState.get());
         }
     }
 
