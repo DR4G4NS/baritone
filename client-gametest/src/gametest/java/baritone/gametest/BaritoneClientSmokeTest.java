@@ -97,21 +97,28 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
                 if (!Boolean.parseBoolean(System.getenv("BARITONE_ELYTRA_LANDING_ONLY"))) {
                     runOpenOverworldElytraCommandScenario(context, singleplayer);
                     runOpenOverworldGoalXZScenario(context, singleplayer);
+                    runDimensionElytraLandingScenario(context, singleplayer, Level.OVERWORLD,
+                            "minecraft:overworld", "minecraft:stone", "overworld");
                     runOpenNetherElytraCommandScenario(context, singleplayer);
+                    runDimensionElytraLandingScenario(context, singleplayer, Level.NETHER,
+                            "minecraft:the_nether", "minecraft:netherrack", "nether");
                     runOpenEndElytraCommandScenario(context, singleplayer);
+                    runDimensionElytraLandingScenario(context, singleplayer, Level.END,
+                            "minecraft:the_end", "minecraft:end_stone", "end");
                     // The legacy Nether lava cruise is opt-in: it is sensitive to chunk packing
                     // and often aborts into a spawn landing. The dedicated Nether landing
-                    // scenario below is the reliable dimension coverage.
+                    // scenario above is the reliable dimension coverage.
                     if (Boolean.parseBoolean(System.getenv("BARITONE_ELYTRA_NETHER_LAVA"))) {
                         runNetherLavaElytraCommandScenario(context, singleplayer);
                     }
+                } else {
+                    runDimensionElytraLandingScenario(context, singleplayer, Level.OVERWORLD,
+                            "minecraft:overworld", "minecraft:stone", "overworld");
+                    runDimensionElytraLandingScenario(context, singleplayer, Level.NETHER,
+                            "minecraft:the_nether", "minecraft:netherrack", "nether");
+                    runDimensionElytraLandingScenario(context, singleplayer, Level.END,
+                            "minecraft:the_end", "minecraft:end_stone", "end");
                 }
-                runDimensionElytraLandingScenario(context, singleplayer, Level.OVERWORLD,
-                        "minecraft:overworld", "minecraft:stone", "overworld");
-                runDimensionElytraLandingScenario(context, singleplayer, Level.NETHER,
-                        "minecraft:the_nether", "minecraft:netherrack", "nether");
-                runDimensionElytraLandingScenario(context, singleplayer, Level.END,
-                        "minecraft:the_end", "minecraft:end_stone", "end");
                 context.takeScreenshot("baritone-client-pathfinding-passed");
             } catch (Throwable failure) {
                 try {
@@ -276,9 +283,14 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         }
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5 -90 0");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
-        // End re-entry after Nether can stall client chunk streaming; the pad was
-        // already filled by the open-End corridor. Do not hard-fail waiting for it.
-        context.waitTicks(40);
+        if (dimension == Level.END) {
+            // Returning from the Nether can stall End chunk streaming even though the
+            // pad was already filled. Do not hard-fail waiting for it.
+            context.waitTicks(40);
+        } else {
+            waitForPreparedSurface(context, targetX, surfaceY, 0);
+            context.waitTicks(10);
+        }
         runElytraLanding(context, singleplayer, scenario, targetX, destY, surfaceY);
         context.takeScreenshot("elytra-landing-" + scenario);
     }
