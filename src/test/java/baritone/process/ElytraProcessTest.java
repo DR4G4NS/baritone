@@ -37,11 +37,33 @@ public class ElytraProcessTest {
     }
 
     @Test
+    public void landingSearchIgnoresVerticalRadiusOnOpenHeightmaps() {
+        baritone.api.utils.BetterBlockPos start = new baritone.api.utils.BetterBlockPos(0, 200, 0);
+        assertTrue(ElytraProcess.isWithinLandingSearch(
+                new baritone.api.utils.BetterBlockPos(8, 80, 0), start, true));
+        assertFalse(ElytraProcess.isWithinLandingSearch(
+                new baritone.api.utils.BetterBlockPos(8, 80, 0), start, false));
+    }
+
+    @Test
     public void landingSearchIsBoundedAndOverflowSafe() {
         baritone.api.utils.BetterBlockPos start = new baritone.api.utils.BetterBlockPos(0, 90, 0);
         assertTrue(ElytraProcess.isWithinLandingSearch(new baritone.api.utils.BetterBlockPos(32, 80, 32), start));
         assertFalse(ElytraProcess.isWithinLandingSearch(
                 new baritone.api.utils.BetterBlockPos(Integer.MAX_VALUE, 90, Integer.MIN_VALUE), start));
         assertFalse(ElytraProcess.isWithinLandingSearch(new baritone.api.utils.BetterBlockPos(0, 123, 0), start));
+    }
+
+    @Test
+    public void landingSearchStaysCompatibleWhenAltitudeDrifts() {
+        baritone.api.utils.BetterBlockPos origin = new baritone.api.utils.BetterBlockPos(40, 106, 0);
+        assertTrue(ElytraProcess.isLandingSearchCompatible(
+                origin, new baritone.api.utils.BetterBlockPos(40, 80, 0), true, true));
+        assertTrue(ElytraProcess.isLandingSearchCompatible(
+                origin, new baritone.api.utils.BetterBlockPos(44, 90, 2), false, false));
+        assertFalse(ElytraProcess.isLandingSearchCompatible(
+                origin, new baritone.api.utils.BetterBlockPos(80, 106, 0), true, true));
+        assertFalse(ElytraProcess.isLandingSearchCompatible(
+                origin, origin, true, false));
     }
 }

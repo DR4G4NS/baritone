@@ -60,6 +60,59 @@ public class ElytraReplayTest {
         assertEquals(0.0D, result.finalState().speed(), 0.0D);
     }
 
+    @Test
+    public void netherRoofStopsAnUpwardBoost() {
+        VoxelGrid world = new VoxelGrid(20, 20, 40);
+        for (int x = 0; x < 20; x++) {
+            for (int z = 0; z < 40; z++) {
+                world.setBlocked(x, 18, z, true);
+            }
+        }
+        ElytraState initial = new ElytraState(10.0D, 12.0D, 8.0D,
+                0.0D, 0.4D, 0.8D, 0.0D, -25.0D, 2, 100, 0);
+        ElytraReplay.Result result = ElytraReplay.run(initial, controls(25, 0.0D, -40.0D, 0, 8), world, 0.1D, 25);
+        assertTrue(result.collided());
+        assertTrue(result.finalState().y() < 18.0D);
+    }
+
+    @Test
+    public void endVoidIsSolidOutOfWorldAndAbortsTheReplay() {
+        VoxelGrid world = new VoxelGrid(16, 24, 32);
+        for (int x = 4; x <= 12; x++) {
+            for (int z = 0; z <= 20; z++) {
+                world.setBlocked(x, 0, z, true);
+            }
+        }
+        ElytraState initial = new ElytraState(8.0D, 10.0D, 4.0D,
+                0.0D, 0.0D, 0.4D, 0.0D, 0.0D, 0, 100, 0);
+        ElytraReplay.Result onIsland = ElytraReplay.run(initial, controls(16, 0.0D, -4.0D), world, 0.1D, 16);
+        assertFalse(onIsland.collided());
+        assertTrue(onIsland.finalState().y() > 2.0D);
+        assertTrue(onIsland.finalState().x() >= 4.0D && onIsland.finalState().x() <= 12.0D);
+
+        ElytraState offIsland = new ElytraState(1.0D, 3.0D, 4.0D,
+                -0.4D, -0.35D, 0.1D, 90.0D, 25.0D, 0, 100, 0);
+        ElytraReplay.Result voided = ElytraReplay.run(offIsland, controls(16, 90.0D, 30.0D), world, 0.1D, 16);
+        assertTrue(voided.collided());
+    }
+
+    @Test
+    public void overworldTreeWallIsDetectedByTheSweptVolume() {
+        VoxelGrid world = new VoxelGrid(24, 24, 24);
+        for (int y = 0; y < 24; y++) {
+            for (int x = 8; x <= 12; x++) {
+                for (int z = 8; z <= 12; z++) {
+                    world.setBlocked(x, y, z, true);
+                }
+            }
+        }
+        ElytraState initial = new ElytraState(4.0D, 10.0D, 10.0D,
+                1.2D, 0.0D, 0.0D, -90.0D, 0.0D, 0, 100, 0);
+        ElytraReplay.Result result = ElytraReplay.run(initial, controls(16, -90.0D, 0.0D), world, 0.1D, 16);
+        assertTrue(result.collided());
+        assertTrue(result.finalState().x() < 8.0D);
+    }
+
     private static List<ElytraControl> controls(int count, double yaw, double pitch, int... rocketTicks) {
         List<ElytraControl> result = new ArrayList<>(count);
         for (int tick = 0; tick < count; tick++) {

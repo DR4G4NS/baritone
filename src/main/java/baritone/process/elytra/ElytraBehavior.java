@@ -340,12 +340,19 @@ public final class ElytraBehavior implements Helper {
         }
 
         public double loadedHorizonDistance() {
+            return loadedHorizonDistance(Double.POSITIVE_INFINITY);
+        }
+
+        public double loadedHorizonDistance(double needed) {
             if (this.path.isEmpty()) {
                 return 0.0D;
             }
             double distance = ctx.player().position().distanceTo(this.path.getVec(this.playerNear));
             for (int i = this.playerNear; i < this.path.size(); i++) {
-                if (!ctx.world().isLoaded(this.path.get(i))) {
+                if (distance >= needed) {
+                    return distance;
+                }
+                if (!ctx.world().getChunkSource().hasChunk(this.path.get(i).x >> 4, this.path.get(i).z >> 4)) {
                     return distance;
                 }
                 if (i + 1 < this.path.size()) {
@@ -651,16 +658,18 @@ public final class ElytraBehavior implements Helper {
             currentSolver = this.solver;
         }
         if (currentSolver != null) {
-            try {
-                this.pendingSolution = currentSolver.get();
-            } catch (Exception ignored) {
-                // it doesn't matter if get() fails since the solution can just be recalculated synchronously
-            } finally {
-                synchronized (this.solverLifecycleLock) {
-                    if (this.solver == currentSolver) {
-                        this.solver = null;
-                    }
+            if (currentSolver.isDone()) {
+                try {
+                    this.pendingSolution = currentSolver.get();
+                } catch (Exception ignored) {
+                    // it doesn't matter if get() fails since the solution can just be recalculated synchronously
+                } finally {
+                    clearSolverIfCurrent(currentSolver);
                 }
+            } else {
+                // Don't block the render thread on a hard pitch solve; redo it synchronously.
+                currentSolver.cancel(true);
+                clearSolverIfCurrent(currentSolver);
             }
         }
 
@@ -706,6 +715,14 @@ public final class ElytraBehavior implements Helper {
         );
     }
 
+    private void clearSolverIfCurrent(Future<Solution> currentSolver) {
+        synchronized (this.solverLifecycleLock) {
+            if (this.solver == currentSolver) {
+                this.solver = null;
+            }
+        }
+    }
+
     /**
      * Called by {@link baritone.process.ElytraProcess#onTick(boolean, boolean)} when the process is in control and the player is flying
      */
@@ -718,7 +735,8 @@ public final class ElytraBehavior implements Helper {
 
         final ElytraFlightProfile profile = ElytraFlightProfile.fromSetting(Baritone.settings().elytraFlightProfile.value);
         final double horizontalSpeed = ctx.player().getDeltaMovement().multiply(1.0D, 0.0D, 1.0D).length();
-        final double loadedHorizon = this.pathManager.loadedHorizonDistance();
+        final double neededHorizon = Math.max(profile.loadedHorizon(), 24.0D + horizontalSpeed * 40.0D);
+        final double loadedHorizon = this.pathManager.loadedHorizonDistance(neededHorizon);
         if (!this.landingMode && shouldWaitForChunks(loadedHorizon, horizontalSpeed, profile.loadedHorizon())) {
             holdForChunkLoading();
             return;
@@ -856,6 +874,9 @@ public final class ElytraBehavior implements Helper {
             int minStep = playerNear;
 
             for (int i = Math.min(playerNear + 20, path.size() - 1); i >= minStep; i--) {
+                if (Thread.interrupted()) {
+                    return null;
+                }
                 final List<Pair<Vec3, Integer>> candidates = new ArrayList<>();
                 for (int dy : heights) {
                     if (relaxation == 0 || i == minStep) {
@@ -936,6 +957,9 @@ public final class ElytraBehavior implements Helper {
             return false;
         }
         if (this.landingMode && !forceUseFirework) {
+            return false;
+        }
+        if (!forceUseFirework && !isFireworkHeadingAligned(ctx.player().getLookAngle(), start, goingTo)) {
             return false;
         }
         if (this.appendDestination && !forceUseFirework) {
@@ -1209,7 +1233,8 @@ public final class ElytraBehavior implements Helper {
                     clear = false;
                 }
             }
-            return clear && (ignoreLava || isFluidSweepClear(
+            return clear && (ignoreLava || !ElytraDimensionPolicy.shouldSweepFluids(ctx.world().dimension())
+                    || isFluidSweepClear(
                     context.boundingBox.inflate(ElytraFlightProfile.fromSetting(
                             Baritone.settings().elytraFlightProfile.value).fluidMargin()),
                     start,
@@ -1218,7 +1243,8 @@ public final class ElytraBehavior implements Helper {
         }
 
         return this.context.raytrace(8, src, dst, NetherPathfinderContext.Visibility.ALL)
-                && (ignoreLava || isFluidSweepClear(
+                && (ignoreLava || !ElytraDimensionPolicy.shouldSweepFluids(ctx.world().dimension())
+                || isFluidSweepClear(
                 context.boundingBox.inflate(ElytraFlightProfile.fromSetting(
                         Baritone.settings().elytraFlightProfile.value).fluidMargin()),
                 start,
@@ -1273,24 +1299,47 @@ public final class ElytraBehavior implements Helper {
     }
 
     static float landingPitch(double heightAboveSurface, double verticalSpeed, float solvedPitch) {
-        if (requiresLandingFlare(verticalSpeed) || verticalSpeed < VANILLA_FALL_DISTANCE_RESET_SPEED) {
+        // Lethal speed always flares, even at cruise. Mild sink at cruise must keep
+        // looking down or the 18–32 band holds altitude and orbits forever.
+        if (verticalSpeed < VANILLA_FALL_DISTANCE_RESET_SPEED) {
+            if (heightAboveSurface > 18.0D && heightAboveSurface <= 36.0D) {
+                return Math.min(solvedPitch, -8.0F);
+            }
             return Math.min(solvedPitch, LANDING_FLARE_PITCH);
         }
         if (heightAboveSurface > 32.0D) {
-            return Math.max(solvedPitch, 10.0F);
+            return Math.max(solvedPitch, 20.0F);
         }
         if (heightAboveSurface > 18.0D) {
-            return Math.max(solvedPitch, 0.0F);
+            return Math.max(solvedPitch, 16.0F);
         }
-        if (heightAboveSurface > 10.0D) {
-            return Math.min(solvedPitch, -18.0F);
+        if (requiresLandingFlare(verticalSpeed) || heightAboveSurface <= 10.0D) {
+            return Math.min(solvedPitch, LANDING_FLARE_PITCH);
         }
-        return Math.min(solvedPitch, LANDING_FLARE_PITCH);
+        return Math.min(solvedPitch, -18.0F);
     }
 
     static boolean shouldWaitForChunks(double loadedHorizon, double horizontalSpeed, double profileHorizon) {
         final double brakingHorizon = 24.0D + horizontalSpeed * 40.0D;
         return Double.isFinite(loadedHorizon) && loadedHorizon < Math.max(profileHorizon, brakingHorizon);
+    }
+
+    /**
+     * Firework acceleration follows the look vector. Boosting while looking more than
+     * 60° off the next node slams boxed corridors and nether caves into the wall.
+     */
+    static boolean isFireworkHeadingAligned(Vec3 look, Vec3 from, Vec3 to) {
+        final double dx = to.x - from.x;
+        final double dz = to.z - from.z;
+        final double destH = Math.sqrt(dx * dx + dz * dz);
+        if (destH < 1.0e-4D) {
+            return true;
+        }
+        final double lookH = Math.sqrt(look.x * look.x + look.z * look.z);
+        if (lookH < 1.0e-4D) {
+            return false;
+        }
+        return (look.x * dx + look.z * dz) / (lookH * destH) >= 0.5D;
     }
 
     private void holdForChunkLoading() {
@@ -1531,8 +1580,9 @@ public final class ElytraBehavior implements Helper {
             motion = step(motion, lookDirection, rotation.getPitch());
             delta = delta.subtract(motion);
 
-            // Collision box while the player is in motion, with additional padding for safety
-            final AABB inMotion = hitbox.inflate(motion.x, motion.y, motion.z).inflate(0.01);
+            // Collision box while the player is in motion, with additional padding for safety.
+            // expandTowards keeps a directional swept volume (cabaletta/baritone#5047 / #5049).
+            final AABB inMotion = ElytraDimensionPolicy.sweptCollisionVolume(hitbox, motion);
 
             int xmin = fastFloor(inMotion.minX);
             int xmax = fastCeil(inMotion.maxX);

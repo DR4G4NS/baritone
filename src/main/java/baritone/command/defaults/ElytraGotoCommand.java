@@ -57,6 +57,9 @@ public final class ElytraGotoCommand extends Command {
         return Arrays.asList(
                 "Sets a coordinate goal and starts the existing Elytra process.",
                 "Relative coordinates use the same syntax as #goto.",
+                "With only X/Z, cruise altitude follows the current dimension:",
+                "Overworld stays near your current Y, Nether stays in the cave band",
+                "(or the roof if you are already above it), and End stays above the void.",
                 "",
                 "Usage:",
                 "> elytragoto <x> <z>",

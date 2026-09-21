@@ -4,9 +4,9 @@ import baritone.testkit.pathfinding.VoxelGrid;
 import baritone.testkit.replay.ElytraControl;
 import baritone.testkit.replay.ElytraFlightModel;
 import baritone.testkit.replay.ElytraState;
+import net.minecraft.world.phys.Vec3;
 import org.junit.Test;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -35,12 +35,26 @@ public class ElytraLandingSafetyTest {
     @Test
     public void landingPhasesBleedSpeedThenFlareBeforeImpact() {
         assertTrue(ElytraBehavior.landingPitch(50.0D, -0.10D, 0.0F) > 0.0F);
-        assertEquals(0.0F, ElytraBehavior.landingPitch(20.0D, -0.10D, 0.0F), 0.0F);
+        assertTrue("cruise altitude must keep descending, not hover level",
+                ElytraBehavior.landingPitch(20.0D, -0.10D, 0.0F) >= 16.0F);
+        assertTrue("mild sink at cruise must not flare away the descent",
+                ElytraBehavior.landingPitch(24.0D, -0.36D, 0.0F) >= 16.0F);
         assertTrue(ElytraBehavior.landingPitch(12.0D, -0.10D, 0.0F) < 0.0F);
         assertTrue(ElytraBehavior.landingPitch(7.0D, -0.10D, 0.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
-        assertTrue(ElytraBehavior.landingPitch(20.0D, -0.51D, 8.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
+        assertTrue(ElytraBehavior.landingPitch(20.0D, -0.51D, 8.0F) <= -8.0F);
+        assertTrue(ElytraBehavior.landingPitch(50.0D, -0.51D, 8.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
         assertTrue(ElytraBehavior.shouldWaitForChunks(40.0D, 1.4D, 88.0D));
         assertFalse(ElytraBehavior.shouldWaitForChunks(Double.POSITIVE_INFINITY, 1.4D, 88.0D));
+    }
+
+    @Test
+    public void fireworksWaitUntilTheLookVectorFacesTheNextNode() {
+        Vec3 from = new Vec3(0.5D, 106.0D, 0.5D);
+        Vec3 dest = new Vec3(40.5D, 104.0D, 0.5D);
+        assertTrue(ElytraBehavior.isFireworkHeadingAligned(new Vec3(1.0D, 0.0D, 0.0D), from, dest));
+        assertFalse(ElytraBehavior.isFireworkHeadingAligned(new Vec3(0.0D, 0.0D, 1.0D), from, dest));
+        assertFalse(ElytraBehavior.isFireworkHeadingAligned(new Vec3(-1.0D, 0.0D, 0.0D), from, dest));
+        assertTrue(ElytraBehavior.isFireworkHeadingAligned(new Vec3(0.8D, -0.2D, 0.1D), from, dest));
     }
 
     @Test
@@ -102,6 +116,71 @@ public class ElytraLandingSafetyTest {
         assertTrue(ElytraVerticalWindow.choose(0, 256, 80, 90, true) == 0);
     }
 
+    @Test
+    public void netherLavaLakeForcesAFlareInsteadOfADive() {
+        VoxelGrid world = new VoxelGrid(40, 40, 40);
+        fillLayer(world, 0, 0, 0, 39, 39);
+        for (int x = 0; x < 40; x++) {
+            for (int z = 0; z < 8; z++) {
+                world.setBlocked(x, 0, z, false);
+            }
+        }
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(20.0D, 24.5D, 20.0D, 0.55D, -0.20D, 0.05D, 0.0D, 12.0D, 4, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("nether-lava-avoid", result);
+        assertTrue("landed in the lava trench z=" + result.lastAirborne.z(),
+                result.lastAirborne.z() >= 8.2D);
+    }
+
+    @Test
+    public void overworldWaterDoesNotCountAsASafePad() {
+        VoxelGrid world = new VoxelGrid(40, 32, 40);
+        fillLayer(world, 0, 0, 0, 39, 39);
+        for (int z = 0; z < 40; z++) {
+            for (int x = 0; x < 8; x++) {
+                world.setBlocked(x, 0, z, false);
+            }
+        }
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(20.0D, 18.5D, 20.0D, 0.05D, -0.08D, 0.02D, 0.0D, 4.0D, 2, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("overworld-island", result);
+        assertTrue("overworld landing fell into the water trench x=" + result.lastAirborne.x(),
+                result.lastAirborne.x() >= 8.2D);
+    }
+
+    @Test
+    public void highOverworldDescentFlaresBeforeVanillaLethalSpeed() {
+        VoxelGrid world = new VoxelGrid(40, 64, 40);
+        fillLayer(world, 0, 0, 0, 39, 39);
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(20.0D, 50.5D, 20.0D, 0.10D, -0.55D, 0.0D, 0.0D, 25.0D, 3, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("overworld-high", result);
+        assertTrue(result.impactVy > ElytraBehavior.VANILLA_FALL_DISTANCE_RESET_SPEED);
+    }
+
+    @Test
+    public void cruiseAltitudeLevelFlightDescendsOntoThePad() {
+        VoxelGrid world = new VoxelGrid(200, 48, 200);
+        fillLayer(world, 0, 0, 0, 199, 199);
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(100.0D, 26.5D, 100.0D, 0.08D, -0.12D, 0.0D, -90.0D, 0.0D, 2, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("cruise-descent", result);
+        assertTrue("must have left cruise altitude before touchdown, y=" + result.lastAirborne.y(),
+                result.lastAirborne.y() < 8.0D);
+    }
+
     private static void fillLayer(VoxelGrid world, int y, int minX, int minZ, int maxX, int maxZ) {
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
@@ -122,7 +201,7 @@ public class ElytraLandingSafetyTest {
         ElytraState lastAirborne = state;
         boolean recoveryOnCooldown = false;
         int cooldown = 0;
-        for (int tick = 0; tick < 160; tick++) {
+        for (int tick = 0; tick < 400; tick++) {
             double height = state.y() - groundTopY;
             boolean needsBoost = ElytraBehavior.requiresLandingBoost(height, state.velocityY(), recoveryOnCooldown);
             float commandedPitch = needsBoost
