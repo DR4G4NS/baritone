@@ -269,14 +269,14 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
             singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + (CORRIDOR_MAX_Z - 4)
                     + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + CORRIDOR_MAX_Z + " minecraft:lava");
         } else if (dimension == Level.END) {
-            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -8 12 " + surfaceY + " 8 minecraft:air");
-            singleplayer.getServer().runCommand(in + "fill 16 " + surfaceY + " -4 32 " + surfaceY + " 4 " + surfaceBlock);
+            singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + CORRIDOR_MIN_Z
+                    + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + (CORRIDOR_MIN_Z + 4) + " minecraft:air");
+            singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + (CORRIDOR_MAX_Z - 4)
+                    + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + CORRIDOR_MAX_Z + " minecraft:air");
         }
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " " + (targetX + 0.5) + " " + (surfaceY + 2)
-                + " 0.5 -90 0");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5 -90 0");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         waitForPreparedSurface(context, targetX, surfaceY, 0);
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5 -90 0");
         context.waitTicks(10);
         runElytraLanding(context, singleplayer, scenario, targetX, destY, surfaceY);
         context.takeScreenshot("elytra-landing-" + scenario);
