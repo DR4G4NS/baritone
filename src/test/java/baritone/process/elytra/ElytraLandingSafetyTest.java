@@ -35,10 +35,13 @@ public class ElytraLandingSafetyTest {
     public void landingPhasesBleedSpeedThenFlareBeforeImpact() {
         assertTrue(ElytraBehavior.landingPitch(50.0D, -0.10D, 0.0F) > 0.0F);
         assertTrue("cruise altitude must keep descending, not hover level",
-                ElytraBehavior.landingPitch(20.0D, -0.10D, 0.0F) >= 12.0F);
+                ElytraBehavior.landingPitch(20.0D, -0.10D, 0.0F) >= 16.0F);
+        assertTrue("mild sink at cruise must not flare away the descent",
+                ElytraBehavior.landingPitch(24.0D, -0.36D, 0.0F) >= 16.0F);
         assertTrue(ElytraBehavior.landingPitch(12.0D, -0.10D, 0.0F) < 0.0F);
         assertTrue(ElytraBehavior.landingPitch(7.0D, -0.10D, 0.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
-        assertTrue(ElytraBehavior.landingPitch(20.0D, -0.51D, 8.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
+        assertTrue(ElytraBehavior.landingPitch(20.0D, -0.51D, 8.0F) <= -8.0F);
+        assertTrue(ElytraBehavior.landingPitch(50.0D, -0.51D, 8.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
         assertTrue(ElytraBehavior.shouldWaitForChunks(40.0D, 1.4D, 88.0D));
         assertFalse(ElytraBehavior.shouldWaitForChunks(Double.POSITIVE_INFINITY, 1.4D, 88.0D));
     }
@@ -155,11 +158,11 @@ public class ElytraLandingSafetyTest {
 
     @Test
     public void cruiseAltitudeLevelFlightDescendsOntoThePad() {
-        VoxelGrid world = new VoxelGrid(40, 40, 40);
-        fillLayer(world, 0, 0, 0, 39, 39);
+        VoxelGrid world = new VoxelGrid(200, 48, 200);
+        fillLayer(world, 0, 0, 0, 199, 199);
         LandingResult result = landWithController(
                 world,
-                new ElytraState(20.0D, 26.5D, 20.0D, 0.35D, 0.02D, 0.0D, 0.0D, 0.0D, 2, 100, 0),
+                new ElytraState(100.0D, 26.5D, 100.0D, 0.08D, -0.12D, 0.0D, -90.0D, 0.0D, 2, 100, 0),
                 1.0D
         );
         assertSafeTouchdown("cruise-descent", result);
@@ -187,7 +190,7 @@ public class ElytraLandingSafetyTest {
         ElytraState lastAirborne = state;
         boolean recoveryOnCooldown = false;
         int cooldown = 0;
-        for (int tick = 0; tick < 160; tick++) {
+        for (int tick = 0; tick < 400; tick++) {
             double height = state.y() - groundTopY;
             boolean needsBoost = ElytraBehavior.requiresLandingBoost(height, state.velocityY(), recoveryOnCooldown);
             float commandedPitch = needsBoost
