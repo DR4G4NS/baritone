@@ -6,7 +6,6 @@ import baritone.testkit.replay.ElytraFlightModel;
 import baritone.testkit.replay.ElytraState;
 import org.junit.Test;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -35,7 +34,8 @@ public class ElytraLandingSafetyTest {
     @Test
     public void landingPhasesBleedSpeedThenFlareBeforeImpact() {
         assertTrue(ElytraBehavior.landingPitch(50.0D, -0.10D, 0.0F) > 0.0F);
-        assertEquals(0.0F, ElytraBehavior.landingPitch(20.0D, -0.10D, 0.0F), 0.0F);
+        assertTrue("cruise altitude must keep descending, not hover level",
+                ElytraBehavior.landingPitch(20.0D, -0.10D, 0.0F) >= 12.0F);
         assertTrue(ElytraBehavior.landingPitch(12.0D, -0.10D, 0.0F) < 0.0F);
         assertTrue(ElytraBehavior.landingPitch(7.0D, -0.10D, 0.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
         assertTrue(ElytraBehavior.landingPitch(20.0D, -0.51D, 8.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
@@ -151,6 +151,20 @@ public class ElytraLandingSafetyTest {
         );
         assertSafeTouchdown("overworld-high", result);
         assertTrue(result.impactVy > ElytraBehavior.VANILLA_FALL_DISTANCE_RESET_SPEED);
+    }
+
+    @Test
+    public void cruiseAltitudeLevelFlightDescendsOntoThePad() {
+        VoxelGrid world = new VoxelGrid(40, 40, 40);
+        fillLayer(world, 0, 0, 0, 39, 39);
+        LandingResult result = landWithController(
+                world,
+                new ElytraState(20.0D, 26.5D, 20.0D, 0.35D, 0.02D, 0.0D, 0.0D, 0.0D, 2, 100, 0),
+                1.0D
+        );
+        assertSafeTouchdown("cruise-descent", result);
+        assertTrue("must have left cruise altitude before touchdown, y=" + result.lastAirborne.y(),
+                result.lastAirborne.y() < 8.0D);
     }
 
     private static void fillLayer(VoxelGrid world, int y, int minX, int minZ, int maxX, int maxZ) {

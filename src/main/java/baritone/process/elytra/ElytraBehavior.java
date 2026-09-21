@@ -1299,11 +1299,13 @@ public final class ElytraBehavior implements Helper {
         if (requiresLandingFlare(verticalSpeed) || verticalSpeed < VANILLA_FALL_DISTANCE_RESET_SPEED) {
             return Math.min(solvedPitch, LANDING_FLARE_PITCH);
         }
+        // Cruise sits ~24 blocks above the pad. A level (0°) look holds altitude and
+        // orbits forever; keep a downward pitch until the flare window.
         if (heightAboveSurface > 32.0D) {
-            return Math.max(solvedPitch, 10.0F);
+            return Math.max(solvedPitch, 16.0F);
         }
         if (heightAboveSurface > 18.0D) {
-            return Math.max(solvedPitch, 0.0F);
+            return Math.max(solvedPitch, 12.0F);
         }
         if (heightAboveSurface > 10.0D) {
             return Math.min(solvedPitch, -18.0F);

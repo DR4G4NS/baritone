@@ -53,4 +53,17 @@ public class ElytraProcessTest {
                 new baritone.api.utils.BetterBlockPos(Integer.MAX_VALUE, 90, Integer.MIN_VALUE), start));
         assertFalse(ElytraProcess.isWithinLandingSearch(new baritone.api.utils.BetterBlockPos(0, 123, 0), start));
     }
+
+    @Test
+    public void landingSearchStaysCompatibleWhenAltitudeDrifts() {
+        baritone.api.utils.BetterBlockPos origin = new baritone.api.utils.BetterBlockPos(40, 106, 0);
+        assertTrue(ElytraProcess.isLandingSearchCompatible(
+                origin, new baritone.api.utils.BetterBlockPos(40, 80, 0), true, true));
+        assertTrue(ElytraProcess.isLandingSearchCompatible(
+                origin, new baritone.api.utils.BetterBlockPos(44, 90, 2), false, false));
+        assertFalse(ElytraProcess.isLandingSearchCompatible(
+                origin, new baritone.api.utils.BetterBlockPos(80, 106, 0), true, true));
+        assertFalse(ElytraProcess.isLandingSearchCompatible(
+                origin, origin, true, false));
+    }
 }

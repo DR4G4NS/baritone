@@ -39,6 +39,10 @@ public class ElytraDimensionPolicyTest {
         assertTrue(ElytraDimensionPolicy.useHeightmapLanding(ElytraDimensionPolicy.Kind.OVERWORLD, 106, 80));
         assertTrue(ElytraDimensionPolicy.useHeightmapLanding(ElytraDimensionPolicy.Kind.END, 90, 64));
         assertFalse(ElytraDimensionPolicy.useHeightmapLanding(ElytraDimensionPolicy.Kind.OVERWORLD, 70, 80));
+        assertFalse(ElytraDimensionPolicy.useHeightmapLanding(ElytraDimensionPolicy.Kind.OVERWORLD, 106, 122));
+        assertTrue(ElytraDimensionPolicy.isColumnRoof(106, 122));
+        assertTrue(ElytraDimensionPolicy.isColumnRoof(106, 106));
+        assertFalse(ElytraDimensionPolicy.isColumnRoof(106, 80));
     }
 
     @Test

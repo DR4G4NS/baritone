@@ -80,6 +80,14 @@ public final class ElytraDimensionPolicy {
         return playerY > motionBlockingHeight;
     }
 
+    /**
+     * True when MOTION_BLOCKING is a ceiling/overhang at or above the flyer
+     * rather than a floor they can descend onto.
+     */
+    public static boolean isColumnRoof(int playerY, int motionBlockingHeight) {
+        return motionBlockingHeight >= playerY;
+    }
+
     public static boolean shouldSweepFluids(ResourceKey<Level> dimension) {
         return shouldSweepFluids(kind(dimension));
     }

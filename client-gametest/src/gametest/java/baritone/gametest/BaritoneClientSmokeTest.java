@@ -20,6 +20,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.component.Fireworks;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
 
@@ -219,7 +220,8 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         encloseElytraCorridor(singleplayer, in, floorBlock, floorY + 1, airMaxY + 1);
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
-        context.waitTicks(20);
+        waitForPreparedSurface(context, 40, floorY, 0);
+        context.waitTicks(10);
     }
 
     private static void runDimensionElytraLandingScenario(ClientGameTestContext context,
@@ -260,7 +262,8 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         }
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
-        context.waitTicks(20);
+        waitForPreparedSurface(context, targetX, surfaceY, 0);
+        context.waitTicks(10);
         runElytraLanding(context, singleplayer, scenario, targetX, destY, surfaceY);
         context.takeScreenshot("elytra-landing-" + scenario);
     }
@@ -284,6 +287,18 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand(in + "fill -16 " + minY + " -17 80 " + ceilingY + " -17 " + wallBlock);
         singleplayer.getServer().runCommand(in + "fill -16 " + minY + " 17 80 " + ceilingY + " 17 " + wallBlock);
         singleplayer.getServer().runCommand(in + "fill -16 " + ceilingY + " -16 80 " + ceilingY + " 16 " + wallBlock);
+    }
+
+    private static void waitForPreparedSurface(ClientGameTestContext context, int x, int y, int z) {
+        context.waitFor(client -> {
+            if (client.level == null) {
+                return false;
+            }
+            BlockPos floor = new BlockPos(x, y, z);
+            return !client.level.getBlockState(floor).isAir()
+                    && client.level.getBlockState(floor.above()).isAir()
+                    && client.level.getChunkSource().hasChunk(x >> 4, z >> 4);
+        }, 400);
     }
 
     private static void runElytraLanding(ClientGameTestContext context,
@@ -383,6 +398,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
             settings.elytraAllowEmergencyLand.value = false;
             settings.elytraAutoSeedAndPrediction.value = true;
             settings.elytraFlightProfile.value = "med";
+            settings.disconnectOnArrival.value = false;
         });
         context.waitTicks(5);
         int rocketsBefore = rocketCount(context);
@@ -462,6 +478,7 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
             settings.elytraAllowEmergencyLand.value = false;
             settings.elytraAutoSeedAndPrediction.value = true;
             settings.elytraFlightProfile.value = "med";
+            settings.disconnectOnArrival.value = false;
         });
         context.waitTicks(5);
         AtomicBoolean touchedEnvironmentalHazard = new AtomicBoolean();
@@ -524,6 +541,14 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
             lastFlightState.set("player=null");
             return;
         }
+        String elytra = "elytra=unreadable";
+        try {
+            IBaritone baritone = primary();
+            elytra = "elytraActive=" + baritone.getElytraProcess().isActive()
+                    + ", display=" + baritone.getElytraProcess().displayName();
+        } catch (RuntimeException ignored) {
+            // Client tick diagnostics must never fail the scenario themselves.
+        }
         String state = "pos=" + player.position()
                 + ", motion=" + player.getDeltaMovement()
                 + ", pitch=" + player.getXRot()
@@ -531,7 +556,8 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
                 + ", alive=" + player.isAlive()
                 + ", health=" + player.getHealth()
                 + ", lava=" + player.isInLava()
-                + ", fire=" + player.isOnFire();
+                + ", fire=" + player.isOnFire()
+                + ", " + elytra;
         lastFlightState.set(state);
         if (!player.isAlive() || player.isInLava() || player.isOnFire()) {
             touchedEnvironmentalHazard.set(true);
