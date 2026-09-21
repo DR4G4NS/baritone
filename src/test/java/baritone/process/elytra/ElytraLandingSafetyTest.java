@@ -4,6 +4,7 @@ import baritone.testkit.pathfinding.VoxelGrid;
 import baritone.testkit.replay.ElytraControl;
 import baritone.testkit.replay.ElytraFlightModel;
 import baritone.testkit.replay.ElytraState;
+import net.minecraft.world.phys.Vec3;
 import org.junit.Test;
 
 import static org.junit.Assert.assertFalse;
@@ -44,6 +45,16 @@ public class ElytraLandingSafetyTest {
         assertTrue(ElytraBehavior.landingPitch(50.0D, -0.51D, 8.0F) <= ElytraBehavior.LANDING_FLARE_PITCH);
         assertTrue(ElytraBehavior.shouldWaitForChunks(40.0D, 1.4D, 88.0D));
         assertFalse(ElytraBehavior.shouldWaitForChunks(Double.POSITIVE_INFINITY, 1.4D, 88.0D));
+    }
+
+    @Test
+    public void fireworksWaitUntilTheLookVectorFacesTheNextNode() {
+        Vec3 from = new Vec3(0.5D, 106.0D, 0.5D);
+        Vec3 dest = new Vec3(40.5D, 104.0D, 0.5D);
+        assertTrue(ElytraBehavior.isFireworkHeadingAligned(new Vec3(1.0D, 0.0D, 0.0D), from, dest));
+        assertFalse(ElytraBehavior.isFireworkHeadingAligned(new Vec3(0.0D, 0.0D, 1.0D), from, dest));
+        assertFalse(ElytraBehavior.isFireworkHeadingAligned(new Vec3(-1.0D, 0.0D, 0.0D), from, dest));
+        assertTrue(ElytraBehavior.isFireworkHeadingAligned(new Vec3(0.8D, -0.2D, 0.1D), from, dest));
     }
 
     @Test

@@ -33,6 +33,12 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
 
     private static final String PLAYER = "BaritoneGameTest";
     private static final int PATH_TIMEOUT_TICKS = 1_200;
+    private static final int CORRIDOR_MIN_X = -16;
+    private static final int CORRIDOR_MAX_X = 80;
+    private static final int CORRIDOR_MIN_Z = -24;
+    private static final int CORRIDOR_MAX_Z = 24;
+    private static final int CORRIDOR_WALL_NEG_Z = CORRIDOR_MIN_Z - 1;
+    private static final int CORRIDOR_WALL_POS_Z = CORRIDOR_MAX_Z + 1;
 
     @Override
     public void runTest(ClientGameTestContext context) {
@@ -214,11 +220,12 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5");
         context.waitFor(client -> client.player != null && client.player.level().dimension() == dimension, 400);
         context.waitTicks(40);
-        singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 32");
-        singleplayer.getServer().runCommand(in + "fill -16 " + floorY + " -16 80 " + floorY + " 16 " + floorBlock);
-        fillAirBox(singleplayer, in, -16, airMinY, -16, 80, airMaxY, 16);
+        singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 48");
+        singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + floorY + " " + CORRIDOR_MIN_Z
+                + " " + CORRIDOR_MAX_X + " " + floorY + " " + CORRIDOR_MAX_Z + " " + floorBlock);
+        fillAirBox(singleplayer, in, CORRIDOR_MIN_X, airMinY, CORRIDOR_MIN_Z, CORRIDOR_MAX_X, airMaxY, CORRIDOR_MAX_Z);
         encloseElytraCorridor(singleplayer, in, floorBlock, floorY + 1, airMaxY + 1);
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 106 0.5 -90 0");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         waitForPreparedSurface(context, 40, floorY, 0);
         context.waitTicks(10);
@@ -246,21 +253,26 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         context.waitFor(client -> client.player != null && client.player.isAlive()
                 && client.player.level().dimension() == dimension, 400);
         context.waitTicks(40);
-        singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 32");
-        singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " 16 " + surfaceBlock);
-        fillAirBox(singleplayer, in, -16, surfaceY + 1, -16, 80, 120, 16);
+        singleplayer.getServer().runCommand(in + "forceload add -32 -32 96 48");
+        singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + CORRIDOR_MIN_Z
+                + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + CORRIDOR_MAX_Z + " " + surfaceBlock);
+        fillAirBox(singleplayer, in, CORRIDOR_MIN_X, surfaceY + 1, CORRIDOR_MIN_Z, CORRIDOR_MAX_X, 120, CORRIDOR_MAX_Z);
         encloseElytraCorridor(singleplayer, in, surfaceBlock, surfaceY + 1, 121);
         if (dimension == Level.OVERWORLD) {
-            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " -12 minecraft:water");
-            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " 12 80 " + surfaceY + " 16 minecraft:water");
+            singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + CORRIDOR_MIN_Z
+                    + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + (CORRIDOR_MIN_Z + 4) + " minecraft:water");
+            singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + (CORRIDOR_MAX_Z - 4)
+                    + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + CORRIDOR_MAX_Z + " minecraft:water");
         } else if (dimension == Level.NETHER) {
-            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -16 80 " + surfaceY + " -12 minecraft:lava");
-            singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " 12 80 " + surfaceY + " 16 minecraft:lava");
+            singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + CORRIDOR_MIN_Z
+                    + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + (CORRIDOR_MIN_Z + 4) + " minecraft:lava");
+            singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + surfaceY + " " + (CORRIDOR_MAX_Z - 4)
+                    + " " + CORRIDOR_MAX_X + " " + surfaceY + " " + CORRIDOR_MAX_Z + " minecraft:lava");
         } else if (dimension == Level.END) {
             singleplayer.getServer().runCommand(in + "fill -16 " + surfaceY + " -8 12 " + surfaceY + " 8 minecraft:air");
             singleplayer.getServer().runCommand(in + "fill 16 " + surfaceY + " -4 32 " + surfaceY + " 4 " + surfaceBlock);
         }
-        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5");
+        singleplayer.getServer().runCommand(in + "tp " + PLAYER + " 0.5 " + startY + " 0.5 -90 0");
         singleplayer.getServer().runCommand("effect give " + PLAYER + " minecraft:instant_health 1 10 true");
         waitForPreparedSurface(context, targetX, surfaceY, 0);
         context.waitTicks(10);
@@ -284,9 +296,12 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
 
     private static void encloseElytraCorridor(TestSingleplayerContext singleplayer, String in,
                                              String wallBlock, int minY, int ceilingY) {
-        singleplayer.getServer().runCommand(in + "fill -16 " + minY + " -17 80 " + ceilingY + " -17 " + wallBlock);
-        singleplayer.getServer().runCommand(in + "fill -16 " + minY + " 17 80 " + ceilingY + " 17 " + wallBlock);
-        singleplayer.getServer().runCommand(in + "fill -16 " + ceilingY + " -16 80 " + ceilingY + " 16 " + wallBlock);
+        singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + minY + " " + CORRIDOR_WALL_NEG_Z
+                + " " + CORRIDOR_MAX_X + " " + ceilingY + " " + CORRIDOR_WALL_NEG_Z + " " + wallBlock);
+        singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + minY + " " + CORRIDOR_WALL_POS_Z
+                + " " + CORRIDOR_MAX_X + " " + ceilingY + " " + CORRIDOR_WALL_POS_Z + " " + wallBlock);
+        singleplayer.getServer().runCommand(in + "fill " + CORRIDOR_MIN_X + " " + ceilingY + " " + CORRIDOR_MIN_Z
+                + " " + CORRIDOR_MAX_X + " " + ceilingY + " " + CORRIDOR_MAX_Z + " " + wallBlock);
     }
 
     private static void waitForPreparedSurface(ClientGameTestContext context, int x, int y, int z) {
@@ -325,6 +340,8 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         AtomicReference<String> lastFlightState = new AtomicReference<>("not airborne");
         singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
         context.runOnClient(client -> {
+            client.player.setYRot(-90.0F);
+            client.player.setXRot(0.0F);
             client.player.startFallFlying();
             client.player.connection.send(new ServerboundPlayerCommandPacket(
                     client.player,
@@ -406,6 +423,8 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         AtomicReference<String> lastFlightState = new AtomicReference<>("not airborne");
         singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
         context.runOnClient(client -> {
+            client.player.setYRot(-90.0F);
+            client.player.setXRot(0.0F);
             client.player.startFallFlying();
             client.player.connection.send(new ServerboundPlayerCommandPacket(
                     client.player,
@@ -486,6 +505,8 @@ public final class BaritoneClientSmokeTest implements FabricClientGameTest {
         singleplayer.getServer().runCommand("gamemode survival " + PLAYER);
         double startY = context.computeOnClient(client -> client.player.getY());
         context.runOnClient(client -> {
+            client.player.setYRot(-90.0F);
+            client.player.setXRot(0.0F);
             client.player.startFallFlying();
             client.player.connection.send(new ServerboundPlayerCommandPacket(
                     client.player,

@@ -959,6 +959,9 @@ public final class ElytraBehavior implements Helper {
         if (this.landingMode && !forceUseFirework) {
             return false;
         }
+        if (!forceUseFirework && !isFireworkHeadingAligned(ctx.player().getLookAngle(), start, goingTo)) {
+            return false;
+        }
         if (this.appendDestination && !forceUseFirework) {
             final double dx = start.x - goingTo.x;
             final double dz = start.z - goingTo.z;
@@ -1319,6 +1322,24 @@ public final class ElytraBehavior implements Helper {
     static boolean shouldWaitForChunks(double loadedHorizon, double horizontalSpeed, double profileHorizon) {
         final double brakingHorizon = 24.0D + horizontalSpeed * 40.0D;
         return Double.isFinite(loadedHorizon) && loadedHorizon < Math.max(profileHorizon, brakingHorizon);
+    }
+
+    /**
+     * Firework acceleration follows the look vector. Boosting while looking more than
+     * 60° off the next node slams boxed corridors and nether caves into the wall.
+     */
+    static boolean isFireworkHeadingAligned(Vec3 look, Vec3 from, Vec3 to) {
+        final double dx = to.x - from.x;
+        final double dz = to.z - from.z;
+        final double destH = Math.sqrt(dx * dx + dz * dz);
+        if (destH < 1.0e-4D) {
+            return true;
+        }
+        final double lookH = Math.sqrt(look.x * look.x + look.z * look.z);
+        if (lookH < 1.0e-4D) {
+            return false;
+        }
+        return (look.x * dx + look.z * dz) / (lookH * destH) >= 0.5D;
     }
 
     private void holdForChunkLoading() {
